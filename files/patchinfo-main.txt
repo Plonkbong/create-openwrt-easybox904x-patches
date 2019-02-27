@@ -1,0 +1,80 @@
+ 
+This commit adds support for the Arcadyan/Astoria VGV952CJW33-E-IR Router aka Vodafon Easybox-904xDSL
+It base on Quallenauge git from here https://github.com/Quallenauge/Easybox-904-XDSL
+Information: 
+https://forum.openwrt.org/t/support-for-easybox-904-lte/14478
+https://openwrt.org/toh/astoria/arcadyan_astoria_easybox_904xdsl_r01
+https://www.randomprojects.org/wiki/Vodafone_EasyBox_904_xDSL
+
+
+
+Hardware:
+---------
+CPU:	       Lantiq PSB 80920 EL V1.2		      VRX200 2x500MHz with a mips32 architekture called mips_34Kc
+RAM:	       EtronTech EM68C16CWQD-25H	      128MB DDRII SDRAM 400MHz
+Flash: 	       Samsung K9F4G08U0x		      256MiB NAND-flash
+Ethernet:      Realtek RTL8367RB		      4x 10/100/1000 Mbit/s vlan support
+Wlan:	       Realtek RT3883F + RT5392L	      5GHz/2.4GHz 802.11abgn
+USB: 	       unknown				      2 x USB-2.0
+Serial:	       (from CPU)			      yes with connectors
+xDSL-Modem:    Lantiq PSB 80190 V V1.1 XWAY VRX208    up to VDSL2 profile 30a and Vectoring support
+POTS:	       Lantiq PEF 42068 V V1.2 XWAY SLIC120   2 x FXS Analog Telefon ports
+ISDN: 	       Lantiq PEF 82902 F V1.1 T TSMINTI 4B3T 1 x S0-Bus
+LCD-Screen:    ILITEK ILI9341			      TFT LCD 320x240 RGB 262K colors
+Touchpad:      unknown			              yes
+Simcardreader: unknown				      one exist but no function
+
+It exist some restrictions:
+- The VRX200 have some speedlimitations under Openwrt
+- Driver for WLAN and touchpad
+found here: https://github.com/Quallenauge/lede-feeds-easybox904
+and here optimised for SDK build: https://github.com/Plonkbong/eb904x-feedfix
+- WLAN non standart Driver because WiSoc, only AP mode are possible
+- xDSL-Modem it is not know whish ADSL-annexes are supported / Vectoring are only with an self extracted image possible
+- ISDN not supported yet and in future
+- Simcardreader not supported
+
+
+
+Building:
+---------
+for an working WLAN it is required to enable devmem in kernel and bussybox:
+CONFIG_BUSYBOX_CUSTOM=y
+CONFIG_BUSYBOX_CONFIG_DEVMEM=y
+CONFIG_KERNEL_DEVMEM=y
+
+
+
+Installation:
+-------------
+short:
+1.) use the UBoot-tftp method to install the initramfs image at your router and start it again
+2.) This is optional but usefull: 
+override the password locked uboot with an free uboot from here:
+linked in https://github.com/Quallenauge/Easybox-904-XDSL commit fa8e9a88891841f6b4a35296315db68526cde2f1 from 27.06.2018
+SHA256: 4d035b3777f1a93090e7f0bd8faf2fa83f4b1bc0570de076f5f5cdbc8680ea9a
+3.) install the sysupgrade-image via sysupgrade
+long:
+see https://github.com/Quallenauge/Easybox-904-XDSL
+
+
+
+Serial:
+-------
+parameter: 115200, 8N1
+
+------------------------------------
+upper edge from Router             |
+------------------------           |
+                                   |
+<quartz> 4 3 2 1 <capacitor>       |
+                                   |
+                                   |
+connectors                         |
+------------------------------------
+
+Pin 1 	Vcc 3.3V (DO NOT CONNECT, since it could irreparably damage the device.)
+Pin 2 	TX
+Pin 3 	RX
+Pin 4 	GND 
+
