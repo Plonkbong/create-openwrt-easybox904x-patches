@@ -12,7 +12,7 @@ Hardware:
 ---------
 CPU:	       Lantiq PSB 80920 EL V1.2		      VRX200 2x500MHz with a mips32 architekture called mips_34Kc
 RAM:	       EtronTech EM68C16CWQD-25H	      128MB DDRII SDRAM 400MHz
-Flash: 	       Samsung K9F4G08U0x		      256MiB NAND-flash
+Flash: 	       Samsung K9F4G08U0x		      512MiB NAND-flash
 Ethernet:      Realtek RTL8367RB		      4x 10/100/1000 Mbit/s vlan support
 Wlan:	       Realtek RT3883F + RT5392L	      5GHz/2.4GHz 802.11abgn
 USB: 	       unknown				      2 x USB-2.0
@@ -30,8 +30,9 @@ It exist some restrictions:
 found here: https://github.com/Quallenauge/lede-feeds-easybox904
 and here optimised for SDK build: https://github.com/Plonkbong/eb904x-feedfix
 - WLAN non standart Driver because WiSoc, only AP mode are possible
-- xDSL-Modem it is not know whish ADSL-annexes are supported / Vectoring are only with an self extracted image possible
-- ISDN not supported yet and in future
+- xDSL-Modem it is not know whish ADSL-annexes are supported / Vectoring are possible, 
+but only with an self extracted modemfirmware from foeign VR9 device.
+- ISDN not supported yet and probably in future
 - Simcardreader not supported
 
 

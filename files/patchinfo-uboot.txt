@@ -1,3 +1,7 @@
 
 This commit adds UBoot support for the Arcadyan/Astoria VGV952CJW33-E-IR Router aka Vodafon Easybox-904xDSL
 It base on Quallenauge git from here https://github.com/Quallenauge/Easybox-904-XDSL
+
+Here is a How to hack with U-Boot on Easybox 904 without danger to brick it.
+https://forum.openwrt.org/t/support-for-easybox-904-lte/14478/49
+linked in information: http://arny.tjps.eu/OpenWrt/EasyBox904xDSL/U-Boot/Starting-another-UBoot-in-RAM-from-the-running-U-Boot.txt

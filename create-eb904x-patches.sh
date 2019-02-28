@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # if git not configured do it first:
-git config --global user.email "you@example.com"; git config --global user.name "Your Name"
+# git config --global user.email "you@example.com"; git config --global user.name "Your Name"
 
 CWD=$(pwd)
 DATE=$(date +%Y.%m.%d)
@@ -19,8 +19,13 @@ OWRT_COMMIT=master
 
 test -d "$PATCHES_D" || mkdir -p "$PATCHES_D"
 cd "$PATCHES_D"
-test -d Easybox-904-XDSL || 	{ git clone https://github.com/Quallenauge/Easybox-904-XDSL.git; cd ./Easybox-904-XDSL; git checkout master-lede; cd ..; }
 test -d openwrt_orig ||		{ git clone https://git.openwrt.org/openwrt/openwrt.git openwrt_orig; }
+test -d Easybox-904-XDSL || 	{ git clone https://github.com/Quallenauge/Easybox-904-XDSL.git; cd ./Easybox-904-XDSL; git checkout master-lede; \
+git remote add openwrt https://git.openwrt.org/openwrt/openwrt.git; git fetch openwrt; git checkout -b master; git pull openwrt master; \
+cd ..; \
+}
+read
+
 cd ./openwrt_orig; git checkout $OWRT_COMMIT; cd ..;
 
 rm -r ./patches_info; mkdir -p ./patches_info
