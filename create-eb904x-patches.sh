@@ -24,7 +24,6 @@ test -d Easybox-904-XDSL || 	{ git clone https://github.com/Quallenauge/Easybox-
 git remote add openwrt https://git.openwrt.org/openwrt/openwrt.git; git fetch openwrt; git checkout -b master; git pull openwrt master; \
 cd ..; \
 }
-read
 
 cd ./openwrt_orig; git checkout $OWRT_COMMIT; cd ..;
 
