@@ -4,14 +4,15 @@ git config --global user.email "you@example.com"; git config --global user.name 
 
 CWD=$(pwd)
 BUILD_ROOT=/opt/build
-#CFGSEED="$CWD/../mkscripts/files/eb904x-config.seed"
-#CFGSEED="$CWD/eb904x-config.seed"
-CFGSEED="$CWD/files/eb904x-smp-no-telefon-config.seed"
-PDATE=2019.02.26
+CFGSEED="$CWD/files/eb904x-with-usb-with-smp-no-telefon-config.seed"
+#PDATE=2019.02.28
+PDATE=$(find "$CWD/result-eb904x-patches" | grep "add-eb904x-support-for-master*" | sort | tail -n1 | rev | cut -d- -f1 | cut -d. -f2-4 | rev)
 BASE_PATCH_PATH="$CWD/result-eb904x-patches/add-eb904x-support-for-master-$PDATE.patch"
 UBOOT_PATCH_PATH="$CWD/result-eb904x-patches/add-uboot-for-eb904x-support-for-master-$PDATE.patch"
 DL_DIR=/opt/openwrt-source-dl
-OWRT_DN=owrtqb-eb904 
+OWRT_DN=eb904_fs 
+
+########
 
 cd "$BUILD_ROOT" || exit 1
 sudo rm -r ./$OWRT_DN || rm -r ./$OWRT_DN 
@@ -25,31 +26,33 @@ rm -r ./dl; ln -sv "$DL_DIR" dl
 
 git am < "$BASE_PATCH_PATH" || patch -p1 < "$BASE_PATCH_PATH" || exit 1
 git am < "$UBOOT_PATCH_PATH" || patch -p1 < "$UBOOT_PATCH_PATH" || exit 1
+cp -vf "$CWD/files/video.mk" ./package/kernel/linux/modules/video.mk || exit 1
+
+#rm -v ./target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt-byDTS.patch || exit 1
+#cp -vf "$CWD/files/4052-NAND-add-easybox904-bbt-byDTS-with-a-lot-of-comments.patch" ./target/linux/lantiq/patches-4.14 || exit 1
+
+########
 
 cat << EOF > ./feeds.conf
 
 src-git eb904 https://github.com/Quallenauge/lede-feeds-easybox904.git
+src-link fix $CWD/files/eb904x-fbtft-feed
 
 EOF
 ./scripts/feeds update -a
 ./scripts/feeds install -p eb904 ralink_bin
 ./scripts/feeds install -p eb904 ralink_inic
 ./scripts/feeds install -p eb904 touchpad
+./scripts/feeds install -p fix fbtft
 
-cat << EOF >> ./target/linux/lantiq/xrx200/config-4.14
-CONFIG_VGA_CONSOLE=y 
-CONFIG_VGACON_SOFT_SCROLLBACK=n 
-CONFIG_DUMMY_CONSOLE_COLUMNS=80
-CONFIG_DUMMY_CONSOLE_ROWS=25
-CONFIG_FRAMEBUFFER_CONSOLE=y
-CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
-CONFIG_FRAMEBUFFER_CONSOLE_ROTATION=y
-EOF
+########
 
 cat "$CFGSEED" > ./.config  || exit 1
 make defconfig # expand to full config
 make menuconfig
+mkdir ./bin
+./scripts/diffconfig.sh > ./bin/eb904x-lastconfig.seed
 
-make -j4 V=1 IGNORE_ERRORS=1
+make -j4 V=1 IGNORE_ERRORS=1 || make -j1 V=s IGNORE_ERRORS=1
 
 exit 0
