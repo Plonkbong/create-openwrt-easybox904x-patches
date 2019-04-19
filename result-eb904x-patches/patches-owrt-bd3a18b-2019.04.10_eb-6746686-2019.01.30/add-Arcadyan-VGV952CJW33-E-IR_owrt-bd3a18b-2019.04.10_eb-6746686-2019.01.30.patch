@@ -1,0 +1,2622 @@
+From 7ad2c99b184fe767a45e78c08b587d2ae7530cf7 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 27 Jun 2018 20:40:37 +0200
+Subject: [PATCH 01/28] VGV952CJW33-E-IR: Wait until mdio bus appears.
+
+---
+ .../arch/mips/boot/dts/VGV952CJW33-E-IR.dts        |  6 +--
+ .../4055-NET-rtl8367b-wait-for-mdio-bus.patch      | 54 ++++++++++++++++++++++
+ 2 files changed, 57 insertions(+), 3 deletions(-)
+ create mode 100644 target/linux/lantiq/patches-4.14/4055-NET-rtl8367b-wait-for-mdio-bus.patch
+
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index 42d55c1..e0bd4c9 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -157,9 +157,9 @@
+ 		//gpio-sda = <&gpio0 1 0>;
+ 		//gpio-sck = <&gpio0 2 0>;
+ 		//cpu_port = <7>;
+-		realtek,extif0 = <1 0 1 1 1 1 1 1 2>; // default found on other profiles
+-		//realtek,extif1   = <1 0 1 1 0 0 1 1 2>; // based on vendor uboot-config
+-		mdio = <&mdio>;
++		//realtek,extif0 = <1 0 1 1 1 1 1 1 2>; // default found on other profiles
++		realtek,extif1   = <1 0 1 1 0 0 1 1 2>; // based on vendor uboot-config
++		mii-bus = <&mdio>;
+ 	};
+ };
+ 
+diff --git a/target/linux/lantiq/patches-4.14/4055-NET-rtl8367b-wait-for-mdio-bus.patch b/target/linux/lantiq/patches-4.14/4055-NET-rtl8367b-wait-for-mdio-bus.patch
+new file mode 100644
+index 0000000..7325c67
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4055-NET-rtl8367b-wait-for-mdio-bus.patch
+@@ -0,0 +1,54 @@
++From 5a5d5130a628583c4137110a3189fe2f3c5c265a Mon Sep 17 00:00:00 2001
++From: Quallenauge <Hamsi2k@freenet.de>
++Date: Wed, 27 Jun 2018 20:35:47 +0200
++Subject: [PATCH] rtl8367b: Defer init until mdio bus appears.
++
++---
++ drivers/net/phy/rtl8367b.c | 21 +++++++++++++++++++++
++ 1 file changed, 21 insertions(+)
++
++diff --git a/drivers/net/phy/rtl8367b.c b/drivers/net/phy/rtl8367b.c
++index e6ea6509..770bf0bc 100644
++--- a/drivers/net/phy/rtl8367b.c
+++++ b/drivers/net/phy/rtl8367b.c
++@@ -17,9 +17,11 @@
++ #include <linux/delay.h>
++ #include <linux/skbuff.h>
++ #include <linux/rtl8367.h>
+++#include <linux/of_mdio.h>
++ 
++ #include "rtl8366_smi.h"
++ 
+++
++ #define RTL8367B_RESET_DELAY	1000	/* msecs*/
++ 
++ #define RTL8367B_PHY_ADDR_MAX	8
++@@ -1526,6 +1528,25 @@ static int  rtl8367b_probe(struct platform_device *pdev)
++ 	struct rtl8366_smi *smi;
++ 	int err;
++ 
+++#ifdef CONFIG_OF
+++    struct device_node *np = pdev->dev.of_node;
+++	struct device_node *mdio_node;
+++	struct mii_bus * ext_mbus;
+++	mdio_node = of_parse_phandle(np, "mii-bus", 0);
+++	if (!mdio_node) {
+++		dev_err(&pdev->dev, "cannot find mdio node phandle");
+++		goto try_gpio;
+++	}
+++
+++	ext_mbus = of_mdio_find_bus(mdio_node);
+++	if (!ext_mbus) {
+++		dev_err(&pdev->dev,
+++			"cannot find mdio bus from bus handle, try again later");
+++		return -EPROBE_DEFER;
+++	}
+++
+++try_gpio:
+++#endif
++ 	smi = rtl8366_smi_probe(pdev);
++ 	if (!smi)
++ 		return -ENODEV;
++-- 
++2.18.0
++
+-- 
+2.7.4
+
+
+From 2083ce73540aca3fa1cec99c3174aa2e0b4864a8 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 02/28] VGV952CJW33-E-IR: Add image generation configuration.
+ Add functionality to generate a full image which can be used by the recovery
+ flash algorithm.
+
+---
+ target/linux/lantiq/image/Makefile |   1 +
+ target/linux/lantiq/image/eb904.mk | 105 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 106 insertions(+)
+ create mode 100644 target/linux/lantiq/image/eb904.mk
+
+diff --git a/target/linux/lantiq/image/Makefile b/target/linux/lantiq/image/Makefile
+index fca3fce..2891256 100644
+--- a/target/linux/lantiq/image/Makefile
++++ b/target/linux/lantiq/image/Makefile
+@@ -12,6 +12,7 @@ KERNEL_LOADADDR = 0x80002000
+ KERNEL_ENTRY = 0x80002000
+ 
+ include $(TOPDIR)/rules.mk
++include eb904.mk
+ include $(INCLUDE_DIR)/image.mk
+ 
+ ifeq ($(SUBTARGET),xway)
+diff --git a/target/linux/lantiq/image/eb904.mk b/target/linux/lantiq/image/eb904.mk
+new file mode 100644
+index 0000000..082e3cb
+--- /dev/null
++++ b/target/linux/lantiq/image/eb904.mk
+@@ -0,0 +1,105 @@
++#
++# Copyright (C) 2010-2016 OpenWrt.org
++#
++# This is free software, licensed under the GNU General Public License v2.
++# See /LICENSE for more information.
++#
++NAND_BLOCKSIZE ?= 2048-128k
++
++define Image/Build
++    $(call Image/Build/$(1),$(1))
++endef
++
++define Build/uImage_eb904
++	mkimage -A $(LINUX_KARCH) \
++		-O linux -T kernel \
++		-C $(1) -a $(KERNEL_LOADADDR) -e $(if $(KERNEL_ENTRY),$(KERNEL_ENTRY),$(KERNEL_LOADADDR)) \
++		-n '$(if $(UIMAGE_NAME),$(UIMAGE_NAME),$(call toupper,$(LINUX_KARCH)) LEDE Linux-$(LINUX_VERSION))' \
++		-d $@ $@.new.padded
++	@mv $@.new.padded $@
++endef
++
++define Build/fullimage_eb904_root
++	mkimage -A mips -O linux -C lzma -T filesystem -a 0x00 \
++		-e 0x00 -n 'LEDE RootFS' \
++		-d $@ $@.mkimage
++	cat $@.mkimage > $@
++endef
++
++define Build/fullimage_eb904_function
++	IMAGE_LIST="$(1) \
++	$(2)"; \
++	ONEIMAGE="$(1).oneimage"; \
++	PLATFORM=`echo $(SUBTARGET)|cut -d_ -f2-|awk '{ print toupper($$1) }'`; \
++	rm -f $$ONEIMAGE; \
++	echo "IMAGE_LIST: $$IMAGE_LIST"; \
++	for i in $$IMAGE_LIST; do \
++		if [ -e $$i  ] ; then \
++			echo "Prepare $$i"; \
++			len=`wc -c $$i | awk '{ printf $$1 }'`; \
++			pad=`expr 16 - $$len % 16`; \
++			pad=`expr $$pad % 16`; \
++			if [ -e $$ONEIMAGE.tmp ] ; then \
++				cat $$i >> $$ONEIMAGE.tmp; \
++			else \
++				cat $$i > $$ONEIMAGE.tmp; \
++			fi; \
++			while [ $$pad -ne 0 ]; do \
++				echo -n "0" >> $$ONEIMAGE.tmp; \
++				pad=`expr $$pad - 1`; \
++			done; \
++		else \
++			echo "$$i not found!"; \
++			rm -f $$ONEIMAGE.tmp; \
++			exit 1; \
++		fi; \
++	done; \
++	mkimage -A MIPS -O Linux -C none -T multi -e 0x00 -a 0x00 -n \
++		"$$PLATFORM Fullimage" -d $$ONEIMAGE.tmp $$ONEIMAGE; \
++	rm -f $$ONEIMAGE.tmp; \
++	chmod 644 $$ONEIMAGE;
++
++	cat $(1).oneimage > $(1);
++endef
++
++define Build/fullimage_eb904_recovery
++	$(call Build/fullimage_eb904_function,$@,$(KDIR)/tmp/$(KERNEL_INITRAMFS_IMAGE))
++endef
++define Build/fullimage_eb904
++	$(call Build/fullimage_eb904_function,$@,$(IMAGE_KERNEL))
++endef
++
++ifeq ($(SUBTARGET),xrx200)
++
++# VR9
++define Device/lantiq_vgv952cjw33-e-ir
++  BLOCKSIZE := 126976
++  PAGESIZE := 2048
++  SUBPAGESIZE := 2048
++  FILESYSTEMS += ubifs
++  UBIFS_OPTS := -m 2048 -e 126976 -c 2047
++
++  IMAGE_SIZE := 32768k
++  MAGIC := 0x27051956
++  DEVICE_TITLE := VGV952CJW33-E-IR - Lantiq Easybox 904
++  DEVICE_DTS := VGV952CJW33-E-IR
++  DEVICE_PACKAGES := kmod-usb-dwc2 kmod-ltq-tapi kmod-ltq-vmmc
++  KERNEL := kernel-bin | append-dtb | lzma | pad-offset 128k 64 | uImage lzma
++#  IMAGES := fullimage-recovery.bin
++  IMAGES := sysupgrade.bin rootfs-ubinized.bin
++  IMAGE/fullimage-ubinized.bin := append-ubi | fullimage_eb904_root | fullimage_eb904 | check-size $$$$(IMAGE_SIZE)
++  IMAGE/fullimage-recovery.bin := append-uImage-fakeroot-hdr | fullimage_eb904_recovery | check-size $$$$(IMAGE_SIZE)
++  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
++  IMAGE/rootfs-ubinized.bin := append-rootfs
++  SUPPORTED_DEVICES += VGV952CJW33-E-IR
++
++#  experimental settings
++#  FEATURES += jffs2_nand
++#  FILESYSTEMS += jffs2-nand-2048-128k
++#  IMAGES := fullimage-ubinized.bin fullimage-jffs2.bin
++#  IMAGE/fullimage-jffs2.bin    := append-rootfs | pad-offset 4096 0 | fullimage_eb904 | check-size $$$$(IMAGE_SIZE)
++endef
++TARGET_DEVICES += lantiq_vgv952cjw33-e-ir
++
++endif
++
+-- 
+2.7.4
+
+
+From c13284ae9ea276de8fea47d33cc82f535a8b3a1f Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 03/28] VGV952CJW33-E-IR: Sysupgrade: Deactivate subpages on
+ nand.
+
+Currently, subpages aren't working on the easybox 904 xdsl nand flash.
+Allthough, The nand driver seems to report it is supported, which isn't.
+If not specified the deactivation of subpages, ubi leds to errors
+when formatting and attaching, detaching and reattaching the ubi partition.
+
+This patch introduced a new property in nand.sh to control this behavior.
+http://www.linux-mtd.infradead.org/faq/ubi.html#L_force_no_subpage
+---
+ package/base-files/files/lib/upgrade/nand.sh       | 23 +++++++++++++++++++---
+ .../lantiq/base-files/lib/upgrade/platform.sh      | 16 ++++++++++++++-
+ 2 files changed, 35 insertions(+), 4 deletions(-)
+
+diff --git a/package/base-files/files/lib/upgrade/nand.sh b/package/base-files/files/lib/upgrade/nand.sh
+index 99916a4..0e726f7 100644
+--- a/package/base-files/files/lib/upgrade/nand.sh
++++ b/package/base-files/files/lib/upgrade/nand.sh
+@@ -10,8 +10,13 @@ CI_KERNPART="${CI_KERNPART:-kernel}"
+ # 'ubi' partition on NAND contains UBI
+ CI_UBIPART="${CI_UBIPART:-ubi}"
+ 
++# <<<<<<<
+ # 'rootfs' partition on NAND contains the rootfs
+ CI_ROOTPART="${CI_ROOTPART:-rootfs}"
++# =======
++# VID header offset is used e.g. to ignore sub pages by setting them to 2048
++CU_UBI_VID_HEADER_OFFSET=""
++# >>>>>>>
+ 
+ ubi_mknod() {
+ 	local dir="$1"
+@@ -129,14 +134,26 @@ nand_upgrade_prepare_ubi() {
+ 
+ 	local ubidev="$( nand_find_ubi "$CI_UBIPART" )"
+ 	if [ ! "$ubidev" ]; then
+-		ubiattach -m "$mtdnum"
++		if [ ! -z $CU_UBI_VID_HEADER_OFFSET ]; then
++		    echo "Forcing ubiattach with possible non standard VID header offset of <$CU_UBI_VID_HEADER_OFFSET>"
++		    ubiattach -m "$mtdnum" -O $CU_UBI_VID_HEADER_OFFSET
++		else
++		    ubiattach -m "$mtdnum"
++		fi
+ 		sync
+ 		ubidev="$( nand_find_ubi "$CI_UBIPART" )"
+ 	fi
+ 
+ 	if [ ! "$ubidev" ]; then
+-		ubiformat /dev/mtd$mtdnum -y
+-		ubiattach -m "$mtdnum"
++		if [ ! -z $CU_UBI_VID_HEADER_OFFSET ]; then
++		    echo "Forcing ubiformat with possible non standard VID header offset of <$CU_UBI_VID_HEADER_OFFSET>"
++		    ubiformat /dev/mtd$mtdnum -s $CU_UBI_VID_HEADER_OFFSET -y
++		    echo "Forcing ubiattach with possible non standard VID header offset of <$CU_UBI_VID_HEADER_OFFSET>"
++		    ubiattach -m "$mtdnum" -O $CU_UBI_VID_HEADER_OFFSET
++		else
++		    ubiformat /dev/mtd$mtdnum -y
++		    ubiattach -m "$mtdnum"
++		fi
+ 		sync
+ 		ubidev="$( nand_find_ubi "$CI_UBIPART" )"
+ 		[ "$has_env" -gt 0 ] && {
+diff --git a/target/linux/lantiq/base-files/lib/upgrade/platform.sh b/target/linux/lantiq/base-files/lib/upgrade/platform.sh
+index 840ebe7..08f8275 100755
+--- a/target/linux/lantiq/base-files/lib/upgrade/platform.sh
++++ b/target/linux/lantiq/base-files/lib/upgrade/platform.sh
+@@ -17,7 +17,8 @@ platform_do_upgrade() {
+ 	bt,homehub-v3a|\
+ 	bt,homehub-v5a|\
+ 	zyxel,p-2812hnu-f1|\
+-	zyxel,p-2812hnu-f3)
++	zyxel,p-2812hnu-f3|\
++	lantiq,vgv952cjw33-e-ir)
+ 		nand_do_upgrade $1
+ 		;;
+ 	*)
+@@ -25,3 +26,16 @@ platform_do_upgrade() {
+ 		;;
+ 	esac
+ }
++
++platform_nand_pre_upgrade() {
++	local board=$(board_name)
++	echo "platform_nand_pre_upgrade()"
++
++	case "$board" in
++	lantiq,vgv952cjw33-e-ir )
++		# This is a global defined in nand.sh, sets another VID header offset than default.
++		echo "Set header offset"
++		CU_UBI_VID_HEADER_OFFSET="2048"
++		;;
++	esac
++}
+-- 
+2.7.4
+
+
+From 4267357a4c9cdcde244d51e64e9e423337086494 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Fri, 9 Nov 2018 23:29:23 +0100
+Subject: [PATCH 04/28] Use standard kernel params, no vpe, no UBI
+
+---
+ .../files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts | 18 +++++++++++-------
+ 1 file changed, 11 insertions(+), 7 deletions(-)
+
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index e0bd4c9..0a20318 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -13,10 +13,14 @@
+ 		// Bootargs when no vpe is used
+ 		// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77 root=/dev/ubiblock0_0 rootdelay=7";
+ 
++		// No vpe, no partition declared as UBI partition
++		bootargs = "console=ttyLTQ0,115200";
++
+ 		// Bootargs when vpe is used
+-			// Bootargs to boot from mtd12 ubifs
++		// Bootargs to boot from mtd12 ubifs
+ 			// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77  root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+-			bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77 root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++			//bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77 root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++			//bootargs = "console=ttyLTQ0,115200 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+ 
+ 			// Bootargs to boot from sda1
+ 			// bootargs = "console=ttyLTQ0,115200 panic=1 DTS-TEST-SEQNO=77 root=/dev/sda1 rootdelay=7 rootfstype=f2fs mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+@@ -192,8 +196,8 @@
+                 };
+ 
+                 partition@40000 {
+-                    label = "rootfs";		// Called "rootfs" in u-boot env. Contains orig. squashfs rootfs
+-                    reg = <0x40000 0x3C00000>;
++                    label = "rootfs";		// Called "rootfs" in u-boot env
++                    reg = <0x40000 0x3C00000>;	// Auto mounted as rootfs if no UBI volume named "rootfs" exists
+                 };
+ 
+                 partition@3C40000 {
+@@ -246,9 +250,9 @@
+                     reg = <0x4C00000 0x4000000>;
+                 };
+ 
+-                partition@8C00000 {			// Used for our real open OpenWrt system for ubi-squashfs (rootfs) and ubifs (rootfs_data)
+-                    label = "ubi";			// Rename to "firmware" for special squashfs-rootfs/jffs2-rootfs_data treatment by OpenWrt
+-                    reg = <0x8C00000 0x13200000>;
++                partition@8C00000 {			// Rename to "ubi" for auto ubi attachment and usage of rootfs, rootfs_data, kernel volumes
++                    label = "misc";			// Rename to "firmware" for special squashfs-rootfs/jffs2-rootfs_data treatment
++                    reg = <0x8C00000 0x13200000>;	
+                 };
+ 
+                 partition@1BE00000 {
+-- 
+2.7.4
+
+
+From 9898eabf4399f622aae5f08b2c444eab4417cd19 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Wed, 7 Nov 2018 13:16:03 +0100
+Subject: [PATCH 05/28] Avoid using device specific eb904.mk for building the
+ images
+
+With only small changes, the standard Makefile for building the target
+images can be used.
+
+Also abandon building an "ubinized" image ("squashfs-rootfs-ubinized.bin"),
+because sysupgrade knows to create ubi volumes from the kernel and rootfs
+parts within a squashfs-sysupgrade.bin file.
+
+Signed-off-by: arny <arnysch@gmx.net>
+---
+ target/linux/lantiq/image/Makefile | 32 +++++++++++++++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/target/linux/lantiq/image/Makefile b/target/linux/lantiq/image/Makefile
+index 2891256..f33dad3 100644
+--- a/target/linux/lantiq/image/Makefile
++++ b/target/linux/lantiq/image/Makefile
+@@ -12,7 +12,6 @@ KERNEL_LOADADDR = 0x80002000
+ KERNEL_ENTRY = 0x80002000
+ 
+ include $(TOPDIR)/rules.mk
+-include eb904.mk
+ include $(INCLUDE_DIR)/image.mk
+ 
+ ifeq ($(SUBTARGET),xway)
+@@ -21,6 +20,21 @@ else
+   UBIFS_OPTS := -m 2048 -e 126KiB -c 4096
+ endif
+ 
++define Build/append-uImage-rootfs
++	mkimage -A mips -O linux -C none -T filesystem  \
++		-n 'OpenWRT RootFS' \
++		-d $(IMAGE_ROOTFS) $@.mkimage
++	cat $@.mkimage >> $@
++endef
++
++define Build/append-uImage-dummyrootfs
++	echo -n "dummy" > $@.dummyrootfs
++	mkimage -A mips -O linux -C none -T filesystem  \
++		-n 'OpenWRT dummy RootFS' \
++	-d $@.dummyrootfs $@.mkimage
++	cat $@.mkimage >> $@
++endef
++
+ define Build/append-avm-fakeroot
+ 	cat ./eva.dummy.squashfs >> $@
+ endef
+@@ -596,6 +610,22 @@ define Device/bt_homehub-v5a
+ endef
+ TARGET_DEVICES += bt_homehub-v5a
+ 
++define Device/lantiq_vgv952cjw33-e-ir
++  $(Device/NAND)
++  BOARD_NAME := VGV952CJW33-E-IR
++  DEVICE_DTS := VGV952CJW33-E-IR
++  DEVICE_TITLE := Easybox 904 / Arcadyan VGV952CJW33-E-IR
++  DEVICE_PACKAGES := kmod-usb-dwc2 kmod-ltq-tapi kmod-ltq-vmmc wpad-basic
++  SUPPORTED_DEVICES += VGV952CJW33-E-IR
++  IMAGES := sysupgrade.bin fullimage.img
++  IMAGE/fullimage.img := append-uImage-rootfs | pad-offset 16 0 | append-kernel
++  # There is no typical use case for this, so commented out. Only here for documentary reason:
++  # Adjust initramfs build so it is flashable to a kernel partition even by the original U-Boot of the eb904
++  # with the reset-button-during-power-on recovery procedure. After boot it won't use flash any longer.
++  # KERNEL_INITRAMFS := kernel-bin | append-dtb | lzma | uImage lzma | pad-offset 16 0 | append-uImage-dummyrootfs | check-size 0x500000
++endef
++TARGET_DEVICES += lantiq_vgv952cjw33-e-ir
++
+ define Device/netgear_dm200
+   DEVICE_DTS := DM200
+   IMAGES := sysupgrade.bin factory.img
+-- 
+2.7.4
+
+
+From a3ec53faf809ec645e7d8bf37edc725813d82c89 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Wed, 7 Nov 2018 13:17:26 +0100
+Subject: [PATCH 06/28] Remove obsolete eb904.mk
+
+Not longer used, as relevant stuff is now in
+target/linux/lantiq/image/Makefile
+
+Signed-off-by: arny <arnysch@gmx.net>
+---
+ target/linux/lantiq/image/eb904.mk | 105 -------------------------------------
+ 1 file changed, 105 deletions(-)
+ delete mode 100644 target/linux/lantiq/image/eb904.mk
+
+diff --git a/target/linux/lantiq/image/eb904.mk b/target/linux/lantiq/image/eb904.mk
+deleted file mode 100644
+index 082e3cb..0000000
+--- a/target/linux/lantiq/image/eb904.mk
++++ /dev/null
+@@ -1,105 +0,0 @@
+-#
+-# Copyright (C) 2010-2016 OpenWrt.org
+-#
+-# This is free software, licensed under the GNU General Public License v2.
+-# See /LICENSE for more information.
+-#
+-NAND_BLOCKSIZE ?= 2048-128k
+-
+-define Image/Build
+-    $(call Image/Build/$(1),$(1))
+-endef
+-
+-define Build/uImage_eb904
+-	mkimage -A $(LINUX_KARCH) \
+-		-O linux -T kernel \
+-		-C $(1) -a $(KERNEL_LOADADDR) -e $(if $(KERNEL_ENTRY),$(KERNEL_ENTRY),$(KERNEL_LOADADDR)) \
+-		-n '$(if $(UIMAGE_NAME),$(UIMAGE_NAME),$(call toupper,$(LINUX_KARCH)) LEDE Linux-$(LINUX_VERSION))' \
+-		-d $@ $@.new.padded
+-	@mv $@.new.padded $@
+-endef
+-
+-define Build/fullimage_eb904_root
+-	mkimage -A mips -O linux -C lzma -T filesystem -a 0x00 \
+-		-e 0x00 -n 'LEDE RootFS' \
+-		-d $@ $@.mkimage
+-	cat $@.mkimage > $@
+-endef
+-
+-define Build/fullimage_eb904_function
+-	IMAGE_LIST="$(1) \
+-	$(2)"; \
+-	ONEIMAGE="$(1).oneimage"; \
+-	PLATFORM=`echo $(SUBTARGET)|cut -d_ -f2-|awk '{ print toupper($$1) }'`; \
+-	rm -f $$ONEIMAGE; \
+-	echo "IMAGE_LIST: $$IMAGE_LIST"; \
+-	for i in $$IMAGE_LIST; do \
+-		if [ -e $$i  ] ; then \
+-			echo "Prepare $$i"; \
+-			len=`wc -c $$i | awk '{ printf $$1 }'`; \
+-			pad=`expr 16 - $$len % 16`; \
+-			pad=`expr $$pad % 16`; \
+-			if [ -e $$ONEIMAGE.tmp ] ; then \
+-				cat $$i >> $$ONEIMAGE.tmp; \
+-			else \
+-				cat $$i > $$ONEIMAGE.tmp; \
+-			fi; \
+-			while [ $$pad -ne 0 ]; do \
+-				echo -n "0" >> $$ONEIMAGE.tmp; \
+-				pad=`expr $$pad - 1`; \
+-			done; \
+-		else \
+-			echo "$$i not found!"; \
+-			rm -f $$ONEIMAGE.tmp; \
+-			exit 1; \
+-		fi; \
+-	done; \
+-	mkimage -A MIPS -O Linux -C none -T multi -e 0x00 -a 0x00 -n \
+-		"$$PLATFORM Fullimage" -d $$ONEIMAGE.tmp $$ONEIMAGE; \
+-	rm -f $$ONEIMAGE.tmp; \
+-	chmod 644 $$ONEIMAGE;
+-
+-	cat $(1).oneimage > $(1);
+-endef
+-
+-define Build/fullimage_eb904_recovery
+-	$(call Build/fullimage_eb904_function,$@,$(KDIR)/tmp/$(KERNEL_INITRAMFS_IMAGE))
+-endef
+-define Build/fullimage_eb904
+-	$(call Build/fullimage_eb904_function,$@,$(IMAGE_KERNEL))
+-endef
+-
+-ifeq ($(SUBTARGET),xrx200)
+-
+-# VR9
+-define Device/lantiq_vgv952cjw33-e-ir
+-  BLOCKSIZE := 126976
+-  PAGESIZE := 2048
+-  SUBPAGESIZE := 2048
+-  FILESYSTEMS += ubifs
+-  UBIFS_OPTS := -m 2048 -e 126976 -c 2047
+-
+-  IMAGE_SIZE := 32768k
+-  MAGIC := 0x27051956
+-  DEVICE_TITLE := VGV952CJW33-E-IR - Lantiq Easybox 904
+-  DEVICE_DTS := VGV952CJW33-E-IR
+-  DEVICE_PACKAGES := kmod-usb-dwc2 kmod-ltq-tapi kmod-ltq-vmmc
+-  KERNEL := kernel-bin | append-dtb | lzma | pad-offset 128k 64 | uImage lzma
+-#  IMAGES := fullimage-recovery.bin
+-  IMAGES := sysupgrade.bin rootfs-ubinized.bin
+-  IMAGE/fullimage-ubinized.bin := append-ubi | fullimage_eb904_root | fullimage_eb904 | check-size $$$$(IMAGE_SIZE)
+-  IMAGE/fullimage-recovery.bin := append-uImage-fakeroot-hdr | fullimage_eb904_recovery | check-size $$$$(IMAGE_SIZE)
+-  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+-  IMAGE/rootfs-ubinized.bin := append-rootfs
+-  SUPPORTED_DEVICES += VGV952CJW33-E-IR
+-
+-#  experimental settings
+-#  FEATURES += jffs2_nand
+-#  FILESYSTEMS += jffs2-nand-2048-128k
+-#  IMAGES := fullimage-ubinized.bin fullimage-jffs2.bin
+-#  IMAGE/fullimage-jffs2.bin    := append-rootfs | pad-offset 4096 0 | fullimage_eb904 | check-size $$$$(IMAGE_SIZE)
+-endef
+-TARGET_DEVICES += lantiq_vgv952cjw33-e-ir
+-
+-endif
+-
+-- 
+2.7.4
+
+
+From ee2207ee417263ac20bc4531b164d56f9ab1cc04 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Tue, 13 Nov 2018 11:13:12 +0100
+Subject: [PATCH 07/28] Use partition 'ubi' (mtd12) for rootfs and rootfs_data;
+ use 512 UBI sub-blocks
+
+Note that if an old UBI partition exists with VID header offset 2048, then
+the kernel will log errors when trying to attach this partition.
+
+This is no problem if the system rootfs is in RAM (initramfs)
+or if it is located on a non UBI partition.
+
+When sysupgrade realizes that 'ubi' cannot be attached (due to old format),
+it will ubiformat the partition for subpage usage und then install the rootfs.
+
+Signed-off-by: arny <arnysch@gmx.net>
+---
+ .../lantiq/base-files/lib/upgrade/platform.sh      |  5 +--
+ .../arch/mips/boot/dts/VGV952CJW33-E-IR.dts        | 40 ++++++++++++++--------
+ target/linux/lantiq/image/Makefile                 | 23 +++++++++----
+ 3 files changed, 44 insertions(+), 24 deletions(-)
+
+diff --git a/target/linux/lantiq/base-files/lib/upgrade/platform.sh b/target/linux/lantiq/base-files/lib/upgrade/platform.sh
+index 08f8275..c5d2706 100755
+--- a/target/linux/lantiq/base-files/lib/upgrade/platform.sh
++++ b/target/linux/lantiq/base-files/lib/upgrade/platform.sh
+@@ -34,8 +34,9 @@ platform_nand_pre_upgrade() {
+ 	case "$board" in
+ 	lantiq,vgv952cjw33-e-ir )
+ 		# This is a global defined in nand.sh, sets another VID header offset than default.
+-		echo "Set header offset"
+-		CU_UBI_VID_HEADER_OFFSET="2048"
++		# (now disabled, as it looks like eb904 can handle 512 byte subpages as reported by driver)
++		#echo "Set header offset"
++		#CU_UBI_VID_HEADER_OFFSET="2048"
+ 		;;
+ 	esac
+ }
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index 0a20318..5f1a3bf 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -10,20 +10,30 @@
+ 	compatible = "lantiq,vgv952cjw33-e-ir", "lantiq,xway", "lantiq,vr9";
+ 
+ 	chosen {
+-		// Bootargs when no vpe is used
+-		// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77 root=/dev/ubiblock0_0 rootdelay=7";
++	    // No vpe, both cores used for linux:
+ 
+-		// No vpe, no partition declared as UBI partition
++		//Rootfs is in partition 'ubi' if present, volume 'rootfs' (1st search prio). Or in mtd partition called 'rootfs' (2nd prio).
+ 		bootargs = "console=ttyLTQ0,115200";
+ 
+-		// Bootargs when vpe is used
+-		// Bootargs to boot from mtd12 ubifs
+-			// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77  root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+-			//bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77 root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+-			//bootargs = "console=ttyLTQ0,115200 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++		// Obsolete:
++		// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77 root=/dev/ubiblock0_0 rootdelay=7";
++
+ 
+-			// Bootargs to boot from sda1
+-			// bootargs = "console=ttyLTQ0,115200 panic=1 DTS-TEST-SEQNO=77 root=/dev/sda1 rootdelay=7 rootfstype=f2fs mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++	    // With vpe, one core dedicated to phone audio signal processing
++
++		// bootargs = "console=ttyLTQ0,115200 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++
++		// Bootargs to boot from sda1
++		// bootargs = "console=ttyLTQ0,115200 root=/dev/sda1 rootdelay=7 rootfstype=f2fs mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++
++		// Obsolete: 
++		// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77  root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++		// Bootargs to boot from mtd12 ubifs
++		// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77  root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++		// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77 root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++		// bootargs = "console=ttyLTQ0,115200 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
++		// Bootargs to boot from sda1
++		// bootargs = "console=ttyLTQ0,115200 panic=1 DTS-TEST-SEQNO=77 root=/dev/sda1 rootdelay=7 rootfstype=f2fs mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+ 	};
+ 
+ 	memory@0 {
+@@ -196,12 +206,12 @@
+                 };
+ 
+                 partition@40000 {
+-                    label = "rootfs";		// Called "rootfs" in u-boot env
++                    label = "rootfs1";		// Called "rootfs" in original u-boot env.
+                     reg = <0x40000 0x3C00000>;	// Auto mounted as rootfs if no UBI volume named "rootfs" exists
+                 };
+ 
+                 partition@3C40000 {
+-                    label = "kernel";		// Called "kernel" in u-boot env. Contains orig. kernel
++                    label = "kernel";		// Called "kernel" in original u-boot env.
+                     reg = <0x3C40000 0x500000>;
+                 };
+ 
+@@ -250,9 +260,9 @@
+                     reg = <0x4C00000 0x4000000>;
+                 };
+ 
+-                partition@8C00000 {			// Rename to "ubi" for auto ubi attachment and usage of rootfs, rootfs_data, kernel volumes
+-                    label = "misc";			// Rename to "firmware" for special squashfs-rootfs/jffs2-rootfs_data treatment
+-                    reg = <0x8C00000 0x13200000>;	
++                partition@8C00000 {			// Called "misc" in original u-boot env.
++                    label = "ubi";			// Rename to "ubi" for auto ubi attachment and usage of rootfs, rootfs_data, kernel volumes
++                    reg = <0x8C00000 0x13200000>;	// Rename to "firmware" for special squashfs-rootfs/jffs2-rootfs_data treatment
+                 };
+ 
+                 partition@1BE00000 {
+diff --git a/target/linux/lantiq/image/Makefile b/target/linux/lantiq/image/Makefile
+index f33dad3..a3828eb 100644
+--- a/target/linux/lantiq/image/Makefile
++++ b/target/linux/lantiq/image/Makefile
+@@ -31,7 +31,7 @@ define Build/append-uImage-dummyrootfs
+ 	echo -n "dummy" > $@.dummyrootfs
+ 	mkimage -A mips -O linux -C none -T filesystem  \
+ 		-n 'OpenWRT dummy RootFS' \
+-	-d $@.dummyrootfs $@.mkimage
++		-d $@.dummyrootfs $@.mkimage
+ 	cat $@.mkimage >> $@
+ endef
+ 
+@@ -617,12 +617,21 @@ define Device/lantiq_vgv952cjw33-e-ir
+   DEVICE_TITLE := Easybox 904 / Arcadyan VGV952CJW33-E-IR
+   DEVICE_PACKAGES := kmod-usb-dwc2 kmod-ltq-tapi kmod-ltq-vmmc wpad-basic
+   SUPPORTED_DEVICES += VGV952CJW33-E-IR
+-  IMAGES := sysupgrade.bin fullimage.img
+-  IMAGE/fullimage.img := append-uImage-rootfs | pad-offset 16 0 | append-kernel
+-  # There is no typical use case for this, so commented out. Only here for documentary reason:
+-  # Adjust initramfs build so it is flashable to a kernel partition even by the original U-Boot of the eb904
+-  # with the reset-button-during-power-on recovery procedure. After boot it won't use flash any longer.
+-  # KERNEL_INITRAMFS := kernel-bin | append-dtb | lzma | uImage lzma | pad-offset 16 0 | append-uImage-dummyrootfs | check-size 0x500000
++# If the rootfs/squashfs should be placed in mtd1: flashing can be done with the reset-button-during-
++# power-on recovery procedure using fullimage.img, or with sysupgrade procedure using sysupgrade.bin.
++# In the .dts file, partition mtd1 MUST be named 'rootfs', and partition mtd12 MUST NOT be named 'ubi'.
++ #IMAGES := sysupgrade.bin fullimage.img
++ #IMAGE/fullimage.img := append-uImage-rootfs | pad-offset 16 0 | append-kernel
++# If the rootfs/squashfs should be placed in an UBI volume in mtd12:
++# flashing can be done with the sysupgrade procedure.
++# In the .dts file, partition mtd1 MUST NOT be named 'rootfs', and partition mtd12 MUST be named 'ubi'.
++  IMAGES := sysupgrade.bin
++# Generate an initramfs file containing an additional dummy squashfs image. This way the original vendor U-Boot
++# can flash it to the mtd2 kernel partition via the reset-button-press-during-power-on recovery procedure
++# if 1) size is max 0x500000 bytes and 2) the initramfs file is manually renamed to fullimage.img.
++# BTW: the uboot-lantiq-easybox904xdsl U-Boot allows larger sizes and starts the initramfs directly without flashing.
++  KERNEL_INITRAMFS := kernel-bin | append-dtb | lzma | uImage lzma | pad-offset 16 0 | append-uImage-dummyrootfs
++ #KERNEL_INITRAMFS := kernel-bin | append-dtb | lzma | uImage lzma | pad-offset 16 0 | append-uImage-dummyrootfs | check-size 0x500000
+ endef
+ TARGET_DEVICES += lantiq_vgv952cjw33-e-ir
+ 
+-- 
+2.7.4
+
+
+From d140625d0eba67db5d79abb922c5607f494090dd Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Fri, 23 Nov 2018 11:46:03 +0100
+Subject: [PATCH 08/28] Add .dts entries to make second USB port work
+
+Signed-off-by: arny <arnysch@gmx.net>
+---
+ .../lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts    | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index 5f1a3bf..de15692 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -344,11 +344,20 @@
+     status = "okay";
+ };
+ 
++&usb_phy1 {
++    status = "okay";
++};
++
+ &usb0 {
+     status = "okay";
+     vbus-supply = <&usb_vbus>;
+ };
+ 
++&usb1 {
++    status = "okay";
++    vbus-supply = <&usb_vbus>;
++};
++
+ &eth0 {
+ 	lan: interface@0 {
+ 		compatible = "lantiq,xrx200-pdi";
+-- 
+2.7.4
+
+
+From e5504478996228514f1b6665cac87b0f405581a2 Mon Sep 17 00:00:00 2001
+From: Vitalii Kovzik <vitalii.kovzik@gmail.com>
+Date: Mon, 12 Nov 2018 22:10:48 +0100
+Subject: [PATCH 09/28] Add gpio-spi driver for 74hc595 pin extender.
+
+---
+ .../arch/mips/boot/dts/VGV952CJW33-E-IR.dts        | 90 +++++++++++++++++-----
+ 1 file changed, 72 insertions(+), 18 deletions(-)
+
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index de15692..c5b38b0 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -92,6 +92,72 @@
+ 		};
+ 	};
+ 
++	spi {
++		compatible = "spi-gpio";
++		address-cells = <1>;
++		size-cells = <0>;
++
++		gpio-sck = <&gpio 29 GPIO_ACTIVE_HIGH >;
++		gpio-mosi = <&gpio 30 GPIO_ACTIVE_HIGH >;
++		num-chipselects = <1>;
++		cs-gpios = <&gpio 39 GPIO_ACTIVE_HIGH >; 
++
++		hc595: gpio_spi@0 {
++			compatible = "fairchild,74hc595";
++			reg = <0>;
++			registers-number = <1>;
++			spi-max-frequency = <1000000>;
++			spi-cpol = <0>;
++			spi-cpha = <0>;
++			gpio-controller;
++			#gpio-cells = <2>;
++		};
++	};
++
++	gpio_export {
++		compatible = "gpio-export";
++		#size-cells = <0>;
++
++		out_0 { /*Unknown*/
++			gpio-export,name = "hc595_0";
++			gpio-export,output = <1>;
++			gpios = <&hc595 0 GPIO_ACTIVE_HIGH>;
++		};
++		out_1 {/*Unknown*/
++			gpio-export,name = "hc595_1";
++			gpio-export,output = <1>;
++			gpios = <&hc595 1 GPIO_ACTIVE_HIGH>;
++		};
++
++		// out_2 is used to reset touch IC and owned by eb904_keypad
++
++		out_3 {/*Unknown*/
++			gpio-export,name = "hc595_3";
++			gpio-export,output = <1>;
++			gpios = <&hc595 3 GPIO_ACTIVE_HIGH>;
++		};
++		out_dsl_eth { /* Switches DSL line + 100MiB eth or 1GiB ethernet on DSL/WAN input*/
++			gpio-export,name = "dsl_en";
++			gpio-export,output = <1>;
++			gpios = <&hc595 4 GPIO_ACTIVE_HIGH>;
++		};
++		out_5 { /*Relay*/
++			gpio-export,name = "hc595_5";
++			gpio-export,output = <1>;
++			gpios = <&hc595 5 GPIO_ACTIVE_HIGH>;
++		};
++		out_6 { /*Relay*/
++			gpio-export,name = "hc595_6";
++			gpio-export,output = <1>;
++			gpios = <&hc595 6 GPIO_ACTIVE_HIGH>;
++		};
++		out_7 { /*Relay*/
++			gpio-export,name = "hc595_7";
++			gpio-export,output = <1>;
++			gpios = <&hc595 7 GPIO_ACTIVE_HIGH>;
++		};
++	};
++
+ 	i2c {
+ 		compatible = "i2c-gpio";
+ 		#address-cells = <1>;
+@@ -109,10 +175,8 @@
+ 			interrupt-parent = <&icu0>;
+ 			interrupts = <135>;
+ 			eb904,interrupt-gpio = <&gpio  0 GPIO_ACTIVE_HIGH /* EXIN */>;
+-			eb904,ctrl-clk-gpios = <&gpio 29 GPIO_ACTIVE_HIGH /* clk */>;
+-			eb904,ctrl-dat-gpios = <&gpio 30 GPIO_ACTIVE_HIGH /* dat */>;
+-			eb904,ctrl-out-gpios = <&gpio 39 GPIO_ACTIVE_HIGH /* out */>;
+-			eb904,alphas = /bits/ 8
++			eb904,ctrl-rst-gpio = <&hc595 2 GPIO_ACTIVE_LOW /* rst */>;
++            eb904,alphas = /bits/ 8
+ 				 <0x07 /* left */
+ 				  0x0a /* down */
+ 				  0x0a /* right */
+@@ -287,20 +351,6 @@
+ *  Following is the very experimental part which is broken and requires much more elaboration
+ */
+ 
+-&stp {
+-	compatible = "lantiq,gpio-stp-xway";
+-	reg = <0xE100BB0 0x40>;
+-	#gpio-cells = <2>;
+-	gpio-controller;
+-
+-	lantiq,shadow = <0xffff>;
+-	lantiq,groups = <0x7>;
+-	lantiq,dsl = <0x3>;
+-	lantiq,phy1 = <0x7>;
+-	lantiq,phy2 = <0x7>;
+-};
+-
+-
+ // From FRITZ3370.dts
+ &gpio {
+ 	pinctrl-names = "default";
+@@ -337,6 +387,10 @@
+ 			lantiq,open-drain;
+ 			lantiq,pull = <0>;
+ 		};
++		conf_spi {
++			lantiq,pins = "io29", "io30", "io39"; /* gpiois for spi */
++			lantiq,pull = <2>; /*Pull Up*/
++		};
+ 	};
+ };
+ 
+-- 
+2.7.4
+
+
+From 4c2ef52647c0c335d68ac0d0962c53013b3bcaa9 Mon Sep 17 00:00:00 2001
+From: Vitalii Kovzik <vitalii.kovzik@gmail.com>
+Date: Fri, 23 Nov 2018 09:32:29 +0100
+Subject: [PATCH 10/28] Add DSL relays handling
+
+Save befor rebase
+---
+ .../network/config/ltq-vdsl-app/files/dsl_control  | 27 +++++++++++++++++++++-
+ .../arch/mips/boot/dts/VGV952CJW33-E-IR.dts        | 18 +++++++--------
+ 2 files changed, 35 insertions(+), 10 deletions(-)
+
+diff --git a/package/network/config/ltq-vdsl-app/files/dsl_control b/package/network/config/ltq-vdsl-app/files/dsl_control
+index e62a5e5..fc50633 100644
+--- a/package/network/config/ltq-vdsl-app/files/dsl_control
++++ b/package/network/config/ltq-vdsl-app/files/dsl_control
+@@ -219,7 +219,29 @@ start_service() {
+ 	esac
+ 
+ 	local annexgpio="/sys/class/gpio/annex"
+-	if [ -d "${annexgpio}a" ] && [ -d "${annexgpio}b" ]; then
++	local dsl_en_gpio="/sys/class/gpio/dsl_en"
++	if [ -d "${dsl_en_gpio}" ]; then
++		echo 1 > "${dsl_en_gpio}/value"
++	fi
++	if  [ -d "${annexgpio}a" ] && [ -d "${annexgpio}b" ] && [-d "${annexgpio}j" ]; then
++		case "${annex}" in
++			a*|l*|m*)
++				echo 1 > "${annexgpio}a/value"
++				echo 0 > "${annexgpio}b/value"
++				echo 0 > "${annexgpio}j/value"
++				;;
++			b*)
++				echo 0 > "${annexgpio}a/value"
++				echo 1 > "${annexgpio}b/value"
++				echo 0 > "${annexgpio}j/value"
++				;;
++			i*|j*)
++				echo 0 > "${annexgpio}a/value"
++				echo 0 > "${annexgpio}b/value"
++				echo 1 > "${annexgpio}j/value"
++				;;
++		esac
++	elif [ -d "${annexgpio}a" ] && [ -d "${annexgpio}b" ]; then
+ 		case "${annex}" in
+ 			a*|l*|m*)
+ 				echo 1 > "${annexgpio}a/value"
+@@ -313,4 +335,7 @@ stop_service() {
+ 	DSL_NOTIFICATION_TYPE="DSL_INTERFACE_STATUS" \
+ 	DSL_INTERFACE_STATUS="DOWN" \
+ 		/sbin/dsl_notify.sh
++	if [ -d "${dsl_en_gpio}" ]; then
++		echo 0 > "${dsl_en_gpio}/value"
++	fi
+ }
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index c5b38b0..8ab778e 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -136,25 +136,25 @@
+ 			gpio-export,output = <1>;
+ 			gpios = <&hc595 3 GPIO_ACTIVE_HIGH>;
+ 		};
+-		out_dsl_eth { /* Switches DSL line + 100MiB eth or 1GiB ethernet on DSL/WAN input*/
++		out_dsl_eth { /* Switches DSL line + 100MiB eth or 1GiB ethernet on DSL/WAN input. Relay 1.*/
+ 			gpio-export,name = "dsl_en";
+ 			gpio-export,output = <1>;
+-			gpios = <&hc595 4 GPIO_ACTIVE_HIGH>;
++			gpios = <&hc595 4 GPIO_ACTIVE_LOW>;
+ 		};
+-		out_5 { /*Relay*/
+-			gpio-export,name = "hc595_5";
++		out_5 { /* Switches filter for DSL line On/Off. Relays 2 and 3 simultaneously.*/
++			gpio-export,name = "annexj";
+ 			gpio-export,output = <1>;
+ 			gpios = <&hc595 5 GPIO_ACTIVE_HIGH>;
+ 		};
+-		out_6 { /*Relay*/
+-			gpio-export,name = "hc595_6";
++		out_6 { /* Switch DSL line betwean ISDN modem and Si3050. Relay 5.*/
++			gpio-export,name = "annexb";
+ 			gpio-export,output = <1>;
+ 			gpios = <&hc595 6 GPIO_ACTIVE_HIGH>;
+ 		};
+-		out_7 { /*Relay*/
+-			gpio-export,name = "hc595_7";
++		out_7 { /* Switch phone outputs N and F betwean analog DSL line and XS1 output from Lantiq SLIC. Relay 4.*/
++			gpio-export,name = "annexa";
+ 			gpio-export,output = <1>;
+-			gpios = <&hc595 7 GPIO_ACTIVE_HIGH>;
++			gpios = <&hc595 7 GPIO_ACTIVE_LOW>;
+ 		};
+ 	};
+ 
+-- 
+2.7.4
+
+
+From acbbef349677a11f0a796d4ddb2d7380aaa84803 Mon Sep 17 00:00:00 2001
+From: Vitalii Kovzik <vitalii.kovzik@gmail.com>
+Date: Tue, 27 Nov 2018 14:44:16 +0100
+Subject: [PATCH 11/28] Add pin definition into stop function
+
+---
+ package/network/config/ltq-vdsl-app/files/dsl_control | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/package/network/config/ltq-vdsl-app/files/dsl_control b/package/network/config/ltq-vdsl-app/files/dsl_control
+index fc50633..70a9192 100644
+--- a/package/network/config/ltq-vdsl-app/files/dsl_control
++++ b/package/network/config/ltq-vdsl-app/files/dsl_control
+@@ -335,6 +335,7 @@ stop_service() {
+ 	DSL_NOTIFICATION_TYPE="DSL_INTERFACE_STATUS" \
+ 	DSL_INTERFACE_STATUS="DOWN" \
+ 		/sbin/dsl_notify.sh
++	local dsl_en_gpio="/sys/class/gpio/dsl_en"
+ 	if [ -d "${dsl_en_gpio}" ]; then
+ 		echo 0 > "${dsl_en_gpio}/value"
+ 	fi
+-- 
+2.7.4
+
+
+From cbcfa9edd858c16e5de3ebcd67a6493d76685650 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Thu, 29 Nov 2018 14:39:37 +0100
+Subject: [PATCH 12/28] Fix LED activity level specification in .dts file
+
+As Henning Schild already found out, the power LED is turned on (i.e.
+"active") on high GPIO output level. Same is true for the TFT backlight.
+(I think this is unusual; it is different from most other devices)
+
+Up to now it was incorrectly specified in the .dts file, which resulted in
+some complications. All software which wanted to turn on a LED needed to
+write the nonstandard value 0 into the brightness (for the power LED) or the
+bl_power (for the backlight) node in the sysfs.
+
+Of course software controlling the LEDs need to be modified to write the
+correct value (e.g. lcdcontroller package) into the sysfs node.
+
+This fix also allows to remove the hack in file rc.local of package
+"base-files", where so far the backlight LED is turned off.
+
+Code has been successfully tried out (together with changes in package lcdcontroller).
+
+Note that now on initializing the backlight, it will be turned on for half a second. I have not
+searched for the reason why this happens, but I find this not to be a problem.
+
+Signed-off-by: arny arnysch@gmx.net
+---
+ .../arch/mips/boot/dts/VGV952CJW33-E-IR.dts        | 83 +++++++++++-----------
+ 1 file changed, 42 insertions(+), 41 deletions(-)
+
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index 8ab778e..a3395c1 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -26,7 +26,7 @@
+ 		// Bootargs to boot from sda1
+ 		// bootargs = "console=ttyLTQ0,115200 root=/dev/sda1 rootdelay=7 rootfstype=f2fs mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+ 
+-		// Obsolete: 
++		// Obsolete:
+ 		// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77  root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+ 		// Bootargs to boot from mtd12 ubifs
+ 		// bootargs = "console=ttyLTQ0,115200 ubi.mtd=12,2048 panic=1 DTS-TEST-SEQNO=77  root=/dev/ubiblock0_0 rootdelay=7 mem=116M phym=128M vpe1_load_addr=0x87e00000 vpe1_mem=2M maxvpes=1 maxtcs=1 nosmp";
+@@ -50,7 +50,7 @@
+ 		bgr;
+ 		buswidth = <8>;
+ 		reset-gpios = <&gpio 6 GPIO_ACTIVE_HIGH>;
+-		led-gpios = <&gpio 28 GPIO_ACTIVE_LOW>;
++		led-gpios = <&gpio 28 GPIO_ACTIVE_HIGH>;
+ 		debug = <1>;
+ 	};
+ 
+@@ -84,11 +84,12 @@
+ 	};
+ 
+ 	gpio-leds {
+-			compatible = "gpio-leds";
+-			power_green: power {
+-			label = "VGV952CJW33:red:power";
+-			gpios = <&gpio 31 GPIO_ACTIVE_LOW>;
+-			default-state = "keep";
++		compatible = "gpio-leds";
++
++		power_green: power {
++		label = "VGV952CJW33:red:power";
++		gpios = <&gpio 31 GPIO_ACTIVE_HIGH>;
++		default-state = "keep";
+ 		};
+ 	};
+ 
+@@ -100,7 +101,7 @@
+ 		gpio-sck = <&gpio 29 GPIO_ACTIVE_HIGH >;
+ 		gpio-mosi = <&gpio 30 GPIO_ACTIVE_HIGH >;
+ 		num-chipselects = <1>;
+-		cs-gpios = <&gpio 39 GPIO_ACTIVE_HIGH >; 
++		cs-gpios = <&gpio 39 GPIO_ACTIVE_HIGH >;
+ 
+ 		hc595: gpio_spi@0 {
+ 			compatible = "fairchild,74hc595";
+@@ -196,39 +197,39 @@
+ 	};
+ 
+ 	mdio: mdio {
+-			compatible = "lantiq,xrx200-mdio";
+-			#address-cells = <1>;
+-			#size-cells = <0>;
+-			phy0: ethernet-phy@0 {
+-				reg = <0x0>;
+-				compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
+-			};
+-			phy1: ethernet-phy@1 {
+-				reg = <0x1>;
+-				compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
+-			};
+-			/*
+-			phy5: ethernet-phy@5 {
+-				reg = <0x5>;
+-			};
+-			*/
+-			phy11: ethernet-phy@11 {
+-				reg = <0x11>;
+-				compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
+-			};
+-			phy12: ethernet-phy@12 {
+-				reg = <0x12>;
+-				compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
+-			};
+-			phy13: ethernet-phy@13 {
+-				reg = <0x13>;
+-				compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
+-			};				
+-			phy14: ethernet-phy@14 {
+-				reg = <0x14>;
+-				compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
+-			};
++		compatible = "lantiq,xrx200-mdio";
++		#address-cells = <1>;
++		#size-cells = <0>;
++		phy0: ethernet-phy@0 {
++			reg = <0x0>;
++			compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
+ 		};
++		phy1: ethernet-phy@1 {
++			reg = <0x1>;
++			compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
++		};
++		/*
++		phy5: ethernet-phy@5 {
++			reg = <0x5>;
++		};
++		*/
++		phy11: ethernet-phy@11 {
++			reg = <0x11>;
++			compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
++		};
++		phy12: ethernet-phy@12 {
++			reg = <0x12>;
++			compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
++		};
++		phy13: ethernet-phy@13 {
++			reg = <0x13>;
++			compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
++		};
++		phy14: ethernet-phy@14 {
++			reg = <0x14>;
++			compatible = "lantiq,phy11g", "ethernet-phy-ieee802.3-c22";
++		};
++	};
+ 
+ 	rtl8367b {
+ 		compatible = "realtek,rtl8367b";
+@@ -417,7 +418,7 @@
+ 		compatible = "lantiq,xrx200-pdi";
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+-		reg = <0>;                                
++		reg = <0>;
+ 		mac-address = [ 00 11 22 33 44 55 ];
+ 		lantiq,switch;
+ 		ethernet@2 {
+-- 
+2.7.4
+
+
+From 3e775bb203c9b4a1f314f6709ea2e232ecc4b1c9 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Sat, 15 Dec 2018 02:02:57 +0100
+Subject: [PATCH 13/28] Add missing space in file /etc/init.d/dsl_control
+
+Signed-off-by: arny <arnysch@gmx.net>
+---
+ package/network/config/ltq-vdsl-app/files/dsl_control | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/package/network/config/ltq-vdsl-app/files/dsl_control b/package/network/config/ltq-vdsl-app/files/dsl_control
+index 70a9192..1ee4309 100644
+--- a/package/network/config/ltq-vdsl-app/files/dsl_control
++++ b/package/network/config/ltq-vdsl-app/files/dsl_control
+@@ -223,7 +223,7 @@ start_service() {
+ 	if [ -d "${dsl_en_gpio}" ]; then
+ 		echo 1 > "${dsl_en_gpio}/value"
+ 	fi
+-	if  [ -d "${annexgpio}a" ] && [ -d "${annexgpio}b" ] && [-d "${annexgpio}j" ]; then
++	if  [ -d "${annexgpio}a" ] && [ -d "${annexgpio}b" ] && [ -d "${annexgpio}j" ]; then
+ 		case "${annex}" in
+ 			a*|l*|m*)
+ 				echo 1 > "${annexgpio}a/value"
+-- 
+2.7.4
+
+
+From 2fbe2f5c66a667d524cfc9ff5ffa2c8d75770c39 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Sun, 9 Dec 2018 15:34:18 +0100
+Subject: [PATCH 14/28] VGV952CJW33-E-IR: DTS: Whitespace format change
+ (cosmetic only)
+
+---
+ .../arch/mips/boot/dts/VGV952CJW33-E-IR.dts        | 220 +++++++++++----------
+ 1 file changed, 114 insertions(+), 106 deletions(-)
+
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index a3395c1..929dca4 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -177,7 +177,7 @@
+ 			interrupts = <135>;
+ 			eb904,interrupt-gpio = <&gpio  0 GPIO_ACTIVE_HIGH /* EXIN */>;
+ 			eb904,ctrl-rst-gpio = <&hc595 2 GPIO_ACTIVE_LOW /* rst */>;
+-            eb904,alphas = /bits/ 8
++			eb904,alphas = /bits/ 8
+ 				 <0x07 /* left */
+ 				  0x0a /* down */
+ 				  0x0a /* right */
+@@ -248,104 +248,112 @@
+ };
+ 
+ &localbus {
+-    ranges = <0 0 0x4000000 0x3ffffff>; // Default in vr9.dtsi is crashing the machine.
+-    nand@0 {
+-            compatible = "lantiq,nand-xway";
+-            bank-width = <2>;
+-            reg = <0 0x0 0x2000000>;
+-            #address-cells = <1>;
+-            #size-cells = <1>;
+-            lantiq,cs = <1>;			// Seems to be needed (EASY80920NAND.dts)
+-
+-            nand-on-flash-bbt;
+-            nand-ecc-strength = <3>;
+-            nand-ecc-step-size = <256>;
+-
+-            partitions {
+-                compatible = "fixed-partitions";
+-                #address-cells = <1>;
+-                #size-cells = <1>;
+-                partition@0 {
+-                    label = "uboot";
+-                    reg = <0x0 0x40000>;
+-                };
+-
+-                partition@40000 {
+-                    label = "rootfs1";		// Called "rootfs" in original u-boot env.
+-                    reg = <0x40000 0x3C00000>;	// Auto mounted as rootfs if no UBI volume named "rootfs" exists
+-                };
+-
+-                partition@3C40000 {
+-                    label = "kernel";		// Called "kernel" in original u-boot env.
+-                    reg = <0x3C40000 0x500000>;
+-                };
+-
+-                partition@4140000 {
+-                    label = "tmp1";
+-                    reg = <0x4140000 0x100000>;
+-                };
+-
+-                partition@4240000 {
+-                    label = "tmp2";
+-                    reg = <0x4240000 0x200000>;
+-                };
+-
+-                partition@4440000 {
+-                    label = "sysconfig";
+-                    reg = <0x4440000 0x100000>;
+-                };
+-
+-                partition@4540000 {
+-                    label = "ubootconfig";
+-                    reg = <0x4540000 0x100000>;
+-                };
+-
+-                partition@4640000 {
+-                    label = "fwdiag";
+-                    reg = <0x4640000 0xC0000>;
+-                };
+-
+-                partition@4700000 {
+-                    label = "lcdimage";
+-                    reg = <0x4700000 0x300000>;
+-                };
+-
+-                partition@4A00000 {
+-                    label = "mfgconfig";
+-                    reg = <0x4A00000 0x100000>;
+-                };
+-
+-                partition@4B00000 {
+-                    label = "sipdata";
+-                    reg = <0x4B00000 0x100000>;
+-                };
+-
+-                partition@4C00000 {
+-                    label = "voice";
+-                    reg = <0x4C00000 0x4000000>;
+-                };
+-
+-                partition@8C00000 {			// Called "misc" in original u-boot env.
+-                    label = "ubi";			// Rename to "ubi" for auto ubi attachment and usage of rootfs, rootfs_data, kernel volumes
+-                    reg = <0x8C00000 0x13200000>;	// Rename to "firmware" for special squashfs-rootfs/jffs2-rootfs_data treatment
+-                };
+-
+-                partition@1BE00000 {
+-                    label = "rootfs2";
+-                    reg = <0x1BE00000 0x3c00000>;
+-                };
+-
+-                partition@1FA00000 {
+-                    label = "kernel2";
+-                    reg = <0x1FA00000 0x500000>;
+-                };
+-
+-                partition@1FF00000 {
+-                    label = "mystery";		// Missing in original u-boot environment, seems to be empty (erased)
+-                    reg = <0x1FF00000 0x100000>;
+-                };
+-            };
+-    };
++    //	#address-cells = <2>;					// Just for info. From vr9.dtsi
++    //	#size-cells = <1>;
++    //	ranges = <0 0 0x0       0x3ffffff			// addrsel0	0x3ffffff and 0x4000010 in vr9.dtsi seem to be wrong, because these are size
++    //    	  1 0 0x4000000 0x4000010>;			// addrsel1	parameters. Not really a problem; the drivers we have use their own hardcoded values
++
++	ranges = <0 0 0x0       0x2000000			// addrsel0	Was set up this way by arcadian eb904 U-Boot for nand. Not used by eb904 linux
++		  1 0 0x2000000 0x1000000			// addrsel1	Size 0x1000000 hardcoded in xway_nand.c. Excessive, as first 0x80 is used only
++		  2 0 0x3000000 0x0000800>;			// addrsel2	Size 0x800 hardcoded in display driver. This is the min size supported by ebu
++
++	nand@1 {						// @1 because using ebu BUSCON1/ADDSEL1
++		compatible = "lantiq,nand-xway";
++		reg = <1 0x0 0x80>;				// Only adresses 0x0..0x7F needed (but driver ignores size 0x80 and tells ebu to map 0x1000000)
++
++	    //	bank-width = <2>;				// Not used by any driver code
++		#address-cells = <1>;
++		#size-cells = <1>;
++		lantiq,cs = <1>;				// Seems to be needed (EASY80920NAND.dts)
++
++		nand-on-flash-bbt;
++
++		partitions {
++		compatible = "fixed-partitions";
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			partition@0 {
++				label = "uboot";
++				reg = <0x0 0x40000>;
++			};
++
++			partition@40000 {
++				label = "rootfs1";		// Called "rootfs" in original u-boot env.
++				reg = <0x40000 0x3C00000>;	// Auto mounted as rootfs if no UBI volume named "rootfs" exists
++			};
++
++			partition@3C40000 {
++				label = "kernel";		// Called "kernel" in original u-boot env.
++				reg = <0x3C40000 0x500000>;
++			};
++
++			partition@4140000 {
++				label = "tmp1";
++				reg = <0x4140000 0x100000>;
++			};
++
++			partition@4240000 {
++				label = "tmp2";
++				reg = <0x4240000 0x200000>;
++			};
++
++			partition@4440000 {
++				label = "sysconfig";
++				reg = <0x4440000 0x100000>;
++			};
++
++			partition@4540000 {
++				label = "ubootconfig";
++				reg = <0x4540000 0x100000>;
++			};
++
++			partition@4640000 {
++				label = "fwdiag";
++				reg = <0x4640000 0xC0000>;
++			};
++
++			partition@4700000 {
++				label = "lcdimage";
++				reg = <0x4700000 0x300000>;
++			};
++
++			partition@4A00000 {
++				label = "mfgconfig";
++				reg = <0x4A00000 0x100000>;
++			};
++
++			partition@4B00000 {
++				label = "sipdata";
++				reg = <0x4B00000 0x100000>;
++			};
++
++			partition@4C00000 {
++				label = "voice";
++				reg = <0x4C00000 0x4000000>;
++			};
++
++			partition@8C00000 {			// Called "misc" in original u-boot env.
++				label = "ubi";			// Rename to "ubi" for auto ubi attachment and usage of rootfs, rootfs_data, kernel volumes
++				reg = <0x8C00000 0x13200000>;	// Rename to "firmware" for special squashfs-rootfs/jffs2-rootfs_data treatment
++			};
++
++			partition@1BE00000 {
++				label = "rootfs2";
++				reg = <0x1BE00000 0x3c00000>;
++			};
++
++			partition@1FA00000 {
++				label = "kernel2";
++				reg = <0x1FA00000 0x500000>;
++			};
++
++			partition@1FF00000 {
++				label = "mystery";		// Missing in original u-boot environment, seems to be empty (erased)
++				reg = <0x1FF00000 0x100000>;
++			};
++		};
++	};
+ };
+ 
+ /*
+@@ -373,7 +381,7 @@
+ 
+ 		pcie-rst {
+ 			lantiq,pins = "io38";				// FRITZ3370.dts, TDW8970.dts, EASY80920.dtsi, P2812HNUFX.dtsi
+-		   //  	lantiq,pins = "io21";				// ARV7519RW22.dts
++		   //	lantiq,pins = "io21";				// ARV7519RW22.dts
+ 			lantiq,pull = <0>;
+ 			lantiq,output = <1>;
+ 		};
+@@ -396,21 +404,21 @@
+ };
+ 
+ &usb_phy0 {
+-    status = "okay";
++	status = "okay";
+ };
+ 
+ &usb_phy1 {
+-    status = "okay";
++	status = "okay";
+ };
+ 
+ &usb0 {
+-    status = "okay";
+-    vbus-supply = <&usb_vbus>;
++	status = "okay";
++	vbus-supply = <&usb_vbus>;
+ };
+ 
+ &usb1 {
+-    status = "okay";
+-    vbus-supply = <&usb_vbus>;
++	status = "okay";
++	vbus-supply = <&usb_vbus>;
+ };
+ 
+ &eth0 {
+-- 
+2.7.4
+
+
+From 85d27abe1f7221e710385d789df910781e3a9fec Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Sun, 9 Dec 2018 15:34:18 +0100
+Subject: [PATCH 15/28] VGV952CJW33-E-IR: DTS: Fix dts definition for display.
+
+The display (formerly named as easybox904-display) has to be named "display",
+see 'Node Names' at https://elinux.org/Device_Tree_Usage.
+The @2 is used because using ebu BUSCON2/ADDSEL2.
+
+Signed-off-by: arny <arnysch@gmx.net>
+---
+ .../arch/mips/boot/dts/VGV952CJW33-E-IR.dts        | 27 +++++++++++-----------
+ 1 file changed, 13 insertions(+), 14 deletions(-)
+
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index 929dca4..d619465 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -40,20 +40,6 @@
+ 		reg = <0x0 0x8000000>;
+ 	};
+ 
+-	easybox904-display{
+-		compatible = "ilitek,ili9341_eb904";
+-		#address-cells = <1>;
+-		#size-cells = <0>;
+-		status = "okay";
+-		rotate = <270>;
+-		fps = <30>;
+-		bgr;
+-		buswidth = <8>;
+-		reset-gpios = <&gpio 6 GPIO_ACTIVE_HIGH>;
+-		led-gpios = <&gpio 28 GPIO_ACTIVE_HIGH>;
+-		debug = <1>;
+-	};
+-
+ 	gpio-keys-polled {
+ 		compatible = "gpio-keys-polled";
+ 		#address-cells = <1>;
+@@ -354,6 +340,19 @@
+ 			};
+ 		};
+ 	};
++
++	display@2 {						// @2 because using ebu BUSCON2/ADDSEL2. Name not 'easybox904-display',
++		compatible = "ilitek,ili9341_eb904";		// see 'Node Names' at https://elinux.org/Device_Tree_Usage
++		reg = <2 0x0 0x4>;				// Size 0x4 contains 2 byte data and 2 byte command registers
++		status = "okay";
++		rotate = <270>;
++		fps = <30>;
++		bgr;
++		buswidth = <8>;
++		reset-gpios = <&gpio 6 GPIO_ACTIVE_HIGH>;
++		led-gpios = <&gpio 28 GPIO_ACTIVE_HIGH>;
++		debug = <1>;
++	};
+ };
+ 
+ /*
+-- 
+2.7.4
+
+
+From 082907c626617a93f79dd078e8e19de2a2512854 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 16/28] VGV952CJW33-E-IR: Add support for fixed-link
+ definition.
+
+This is a common approach to define links as fixed.
+Currently only dts definition is supported.
+---
+ .../4027-NET-MIPS-lantiq-support-fixed-link.patch  | 84 ++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4027-NET-MIPS-lantiq-support-fixed-link.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4027-NET-MIPS-lantiq-support-fixed-link.patch b/target/linux/lantiq/patches-4.14/4027-NET-MIPS-lantiq-support-fixed-link.patch
+new file mode 100644
+index 0000000..fe12861
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4027-NET-MIPS-lantiq-support-fixed-link.patch
+@@ -0,0 +1,84 @@
++--- a/drivers/net/ethernet/lantiq_xrx200.c
+++++ b/drivers/net/ethernet/lantiq_xrx200.c
++@@ -1319,31 +1319,43 @@ static int xrx200_mdio_probe(struct net_
++ 	struct phy_device *phydev = NULL;
++ 	unsigned val;
++ 
++-	phydev = mdiobus_get_phy(priv->hw->mii_bus, port->phy_addr);
+++	if (of_phy_is_fixed_link(port->phy_node)) {
+++		netdev_info(dev, "Connect as fixed link.\n");
+++		phydev = of_phy_connect(dev, port->phy_node, &xrx200_mdio_link, 0,
+++				port->phy_if);
++ 
++-	if (!phydev) {
++-		netdev_err(dev, "no PHY found\n");
++-		return -ENODEV;
++-	}
+++		if (IS_ERR(phydev)) {
+++			netdev_err(dev, "Could not attach to PHY\n");
+++			return PTR_ERR(phydev);
+++		}
+++	}else{
+++		netdev_info(dev, "Connect as common phy link.\n");
+++		phydev = mdiobus_get_phy(priv->hw->mii_bus, port->phy_addr);
+++		if (!phydev) {
+++			netdev_err(dev, "no PHY found\n");
+++			return -ENODEV;
+++		}
++ 
++-	phydev = phy_connect(dev, phydev_name(phydev), &xrx200_mdio_link,
++-				port->phy_if);
+++		phydev = phy_connect(dev, phydev_name(phydev), &xrx200_mdio_link,
+++					port->phy_if);
++ 
++-	if (IS_ERR(phydev)) {
++-		netdev_err(dev, "Could not attach to PHY\n");
++-		return PTR_ERR(phydev);
+++		if (IS_ERR(phydev)) {
+++			netdev_err(dev, "Could not attach to PHY\n");
+++			return PTR_ERR(phydev);
+++		}
+++
+++		phydev->supported &= (SUPPORTED_10baseT_Half
+++				| SUPPORTED_10baseT_Full
+++				| SUPPORTED_100baseT_Half
+++				| SUPPORTED_100baseT_Full
+++				| SUPPORTED_1000baseT_Half
+++				| SUPPORTED_1000baseT_Full
+++				| SUPPORTED_Autoneg
+++				| SUPPORTED_MII
+++				| SUPPORTED_TP);
+++		phydev->advertising = phydev->supported;
++ 	}
++ 
++-	phydev->supported &= (SUPPORTED_10baseT_Half
++-			| SUPPORTED_10baseT_Full
++-			| SUPPORTED_100baseT_Half
++-			| SUPPORTED_100baseT_Full
++-			| SUPPORTED_1000baseT_Half
++-			| SUPPORTED_1000baseT_Full
++-			| SUPPORTED_Autoneg
++-			| SUPPORTED_MII
++-			| SUPPORTED_TP);
++-	phydev->advertising = phydev->supported;
++ 	port->phydev = phydev;
++ 	phydev->no_auto_carrier_off = true;
++ 
++@@ -1630,6 +1642,17 @@ static void xrx200_of_port(struct xrx200
++ 
++ 	memset(p, 0, sizeof(struct xrx200_port));
++ 	p->phy_node = of_parse_phandle(port, "phy-handle", 0);
+++
+++	if (!p->phy_node && of_phy_is_fixed_link(port)) {
+++		pr_info("Static link. Port <%d>!\n", p->num);
+++		if (of_phy_register_fixed_link(port)<0){
+++			pr_info("invalid fixed-link\n");
+++		}else{
+++			pr_info("Registered fixed-link\n");
+++		}
+++		p->phy_node = of_node_get(port);
+++	}
+++
++ 	addr = of_get_property(p->phy_node, "reg", NULL);
++ 	if (!addr)
++ 		return;
+-- 
+2.7.4
+
+
+From 85f3b43c97237797c10bf36a56b3efd6ae25cefa Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 17/28] VGV952CJW33-E-IR: lantiq/xrx200-net: add FID (filtering
+ identifier) setting
+
+By setting the FID of a VLAN group to a value other then the default (0) it
+is possible to switch from Shared VLAN Learning to Independant VLAN Learning.
+
+Taken from: https://patchwork.ozlabs.org/patch/584699/
+
+The current wifi setup is to use dedicated vlans for wlan traffic.
+eth0.66 is attached to the br-lan bridge.
+Without the patch the switch behaves same as described at
+https://dev.openwrt.org/ticket/8701 .
+To get around, implement the fid functionality and assign different fids
+to eth0.1 and eth0.66.
+---
+ .../4028-NET-MIPS-lantiq-add-FID-setting.patch     | 86 ++++++++++++++++++++++
+ 1 file changed, 86 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4028-NET-MIPS-lantiq-add-FID-setting.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4028-NET-MIPS-lantiq-add-FID-setting.patch b/target/linux/lantiq/patches-4.14/4028-NET-MIPS-lantiq-add-FID-setting.patch
+new file mode 100644
+index 0000000..37c72ac
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4028-NET-MIPS-lantiq-add-FID-setting.patch
+@@ -0,0 +1,86 @@
++diff --git a/drivers/net/ethernet/lantiq_xrx200.c b/drivers/net/ethernet/lantiq_xrx200.c
++index a19a127..8b8295b 100644
++--- a/drivers/net/ethernet/lantiq_xrx200.c
+++++ b/drivers/net/ethernet/lantiq_xrx200.c
++@@ -568,6 +568,35 @@ static int xrx200sw_get_vlan_vid(struct switch_dev *dev, const struct switch_att
++ 	return 0;
++ }
++ 
+++static int xrx200sw_set_vlan_fid(struct switch_dev *dev, const struct switch_attr *attr,
+++				 struct switch_val *val)
+++{
+++	int i;
+++	struct xrx200_pce_table_entry tev;
+++
+++	tev.table = XRX200_PCE_ACTVLAN_IDX;
+++
+++	tev.index = val->port_vlan;
+++	xrx200_pce_table_entry_read(&tev);
+++	tev.val[0] = val->value.i;
+++	xrx200_pce_table_entry_write(&tev);
+++
+++	return 0;
+++}
+++
+++static int xrx200sw_get_vlan_fid(struct switch_dev *dev, const struct switch_attr *attr,
+++				 struct switch_val *val)
+++{
+++	struct xrx200_pce_table_entry te;
+++
+++	te.table = XRX200_PCE_ACTVLAN_IDX;
+++	te.index = val->port_vlan;
+++	xrx200_pce_table_entry_read(&te);
+++	val->value.i = te.val[0];
+++
+++	return 0;
+++}
+++
++ static int xrx200sw_set_vlan_ports(struct switch_dev *dev, struct switch_val *val)
++ {
++ 	struct xrx200_hw *hw = container_of(dev, struct xrx200_hw, swdev);
++@@ -708,6 +737,30 @@ static int xrx200sw_get_port_pvid(struct switch_dev *dev, int port, int *val)
++ 	return 0;
++ }
++ 
+++static int xrx200sw_set_port_pvid(struct switch_dev *dev, int port, int val)
+++{
+++	int i;
+++	struct xrx200_pce_table_entry tev;
+++
+++	if (port >= XRX200_MAX_PORT)
+++		return -EINVAL;
+++
+++	tev.table = XRX200_PCE_ACTVLAN_IDX;
+++
+++	for (i = 0; i < XRX200_MAX_VLAN; i++)
+++	{
+++		tev.index = i;
+++		xrx200_pce_table_entry_read(&tev);
+++		if (tev.key[0] == val)
+++		{
+++			xrx200sw_write_x(i, XRX200_PCE_DEFPVID_PVID, port);
+++			return 0;
+++		}
+++	}
+++
+++	return -EINVAL;
+++}
+++
++ static int xrx200sw_get_port_link(struct switch_dev *dev,
++ 				  int port,
++ 				  struct switch_port_link *link)
++@@ -804,6 +857,14 @@ static struct switch_attr xrx200sw_vlan[] = {
++ 	},
++ 	{
++ 		.type = SWITCH_TYPE_INT,
+++		.name = "fid",
+++		.description = "Filtering Identifier (0-63)",
+++		.set = xrx200sw_set_vlan_fid,
+++		.get = xrx200sw_get_vlan_fid,
+++		.max = 63,
+++	},
+++	{
+++		.type = SWITCH_TYPE_INT,
++ 		.name = "enable",
++ 		.description = "Enable VLAN",
++ 		.set = xrx200sw_set_vlan_enable,
+-- 
+2.7.4
+
+
+From b3b61e1673383552ff18f16dfe922eb3a8b9a776 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 18/28] VGV952CJW33: Add buscon2 and addrsel2 parameters, taken
+ from vendor firmware. It is needed to setup the attached display.
+
+---
+ .../4050-MIPS-lantiq-EBU-set_buscon_params.patch   | 24 ++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch b/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+new file mode 100644
+index 0000000..6bdf74e
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+@@ -0,0 +1,24 @@
++--- a/arch/mips/include/asm/mach-lantiq/xway/lantiq_soc.h
+++++ b/arch/mips/include/asm/mach-lantiq/xway/lantiq_soc.h
++@@ -87,6 +87,8 @@ extern __iomem void *ltq_cgu_membase;
++ #define LTQ_EBU_PCC_ISTAT	0x00A0
++ #define LTQ_EBU_BUSCON1		0x0064
++ #define LTQ_EBU_ADDRSEL1	0x0024
+++#define LTQ_EBU_BUSCON2		0x0068
+++#define LTQ_EBU_ADDRSEL2	0x0028
++ #define EBU_WRDIS		0x80000000
++ 
++ /* WDT */
++--- a/arch/mips/lantiq/xway/sysctrl.c
+++++ b/arch/mips/lantiq/xway/sysctrl.c
++@@ -514,6 +514,10 @@ void __init ltq_soc_init(void)
++ 
++ 	/* make sure to unprotect the memory region where flash is located */
++ 	ltq_ebu_w32(ltq_ebu_r32(LTQ_EBU_BUSCON0) & ~EBU_WRDIS, LTQ_EBU_BUSCON0);
+++	printk("%s:%s:%d LTQ_EBU_BUSCON2: 0x%08x\n",__FILE__,__FUNCTION__,__LINE__, ltq_ebu_r32(LTQ_EBU_BUSCON2));
+++	//ltq_ebu_w32(0x0001d7ff, LTQ_EBU_BUSCON2); // U-Boot setting
+++	ltq_ebu_w32(0x0001d3dd, LTQ_EBU_BUSCON2);   // init script setting
+++	printk("%s:%s:%d LTQ_EBU_BUSCON2: 0x%08x\n",__FILE__,__FUNCTION__,__LINE__, ltq_ebu_r32(LTQ_EBU_BUSCON2));
++ 
++ 	/* add our generic xway clocks */
++ 	clkdev_add_pmu("10000000.fpi", NULL, 0, 0, PMU_FPI);
+-- 
+2.7.4
+
+
+From 5cdbe1d60acb32434bde50d8f1db279906199cba Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 19/28] VGV952CJW33-E-IR: Add bad block table implementation.
+ This is based of the vendor implementation which uses a proprietary bad block
+ signature
+
+bbt_pattern[] = {'A', 'R', 'C', 'A' };
+mirror_pattern[] = {'a', 'c', 'r', 'a' };
+
+instead of the upstream one:
+
+bbt_pattern[] = {'B', 'b', 't', '0' }
+mirror_pattern[] = {'1', 't', 'b', 'B' }
+---
+ .../4052-NAND-add-easybox904-bbt.patch             | 68 ++++++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch b/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
+new file mode 100644
+index 0000000..4e9e9d1
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
+@@ -0,0 +1,68 @@
++--- a/drivers/mtd/nand/nand_bbt.c
+++++ b/drivers/mtd/nand/nand_bbt.c
++@@ -76,6 +76,13 @@
++ #define BBT_ENTRY_MASK		0x03
++ #define BBT_ENTRY_SHIFT		2
++ 
+++#define CUSTOMIZED_BBT 1
+++#if CUSTOMIZED_BBT /*ctc*/
+++ #define	BAD_BLK_OOB_MARK_START	4
+++ #define	BAD_BLK_OOB_MARK_END	5
+++ #define	BAD_BLK_OOB_MARK_PATT	0xFF
+++#endif
+++
++ static int nand_update_bbt(struct mtd_info *mtd, loff_t offs);
++ 
++ static inline uint8_t bbt_get_entry(struct nand_chip *chip, int block)
++@@ -111,6 +118,10 @@ static int check_pattern_no_oob(uint8_t
++  */
++ static int check_pattern(uint8_t *buf, int len, int paglen, struct nand_bbt_descr *td)
++ {
+++#if CUSTOMIZED_BBT /*ctc*/
+++	int i;
+++	uint8_t *p = buf;
+++#endif
++ 	if (td->options & NAND_BBT_NO_OOB)
++ 		return check_pattern_no_oob(buf, td);
++ 
++@@ -118,6 +129,13 @@ static int check_pattern(uint8_t *buf, i
++ 	if (memcmp(buf + paglen + td->offs, td->pattern, td->len))
++ 		return -1;
++ 
+++#if CUSTOMIZED_BBT /*ctc*/
+++	for (i = BAD_BLK_OOB_MARK_START, p=buf+paglen; i <= BAD_BLK_OOB_MARK_END; i++) {
+++		if (p[i] != BAD_BLK_OOB_MARK_PATT)
+++			return -1;
+++	}
+++#endif
+++
++ 	return 0;
++ }
++ 
++@@ -1277,8 +1295,13 @@ static int nand_update_bbt(struct mtd_in
++ static uint8_t scan_ff_pattern[] = { 0xff, 0xff };
++ 
++ /* Generic flash bbt descriptors */
+++#if CUSTOMIZED_BBT /*ctc*/
+++static uint8_t bbt_pattern[] = {'A', 'R', 'C', 'A' };
+++static uint8_t mirror_pattern[] = {'a', 'c', 'r', 'a' };
+++#else
++ static uint8_t bbt_pattern[] = {'B', 'b', 't', '0' };
++ static uint8_t mirror_pattern[] = {'1', 't', 'b', 'B' };
+++#endif
++ 
++ static struct nand_bbt_descr bbt_main_descr = {
++ 	.options = NAND_BBT_LASTBLOCK | NAND_BBT_CREATE | NAND_BBT_WRITE
++@@ -1340,7 +1363,12 @@ static int nand_create_badblock_pattern(
++ 	bd = kzalloc(sizeof(*bd), GFP_KERNEL);
++ 	if (!bd)
++ 		return -ENOMEM;
+++
+++#if CUSTOMIZED_BBT /*ctc*/
+++	bd->options = 0 & BADBLOCK_SCAN_MASK;
+++#else
++ 	bd->options = this->bbt_options & BADBLOCK_SCAN_MASK;
+++#endif
++ 	bd->offs = this->badblockpos;
++ 	bd->len = (this->options & NAND_BUSWIDTH_16) ? 2 : 1;
++ 	bd->pattern = scan_ff_pattern;
+-- 
+2.7.4
+
+
+From a0916b45378d3ee9314c865cc7b1f12736a515e3 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Mon, 21 May 2018 23:55:01 -0100
+Subject: [PATCH 20/28] VGV952CJW33-E-IR: Revert "wireless: wext: remove
+ ndo_do_ioctl fallback" This reverts commit
+ 8bfb3676606454ffec836f56c5dc3e69dfc0956a.
+
+The ralink inic driver currently uses this for controlling the network
+adapters. In future versions the driver has to be modernized to comply
+with future kernel drivers.
+---
+ ...4053-NET-reactivate-ndo_do_ioctl-fallback.patch | 27 ++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4053-NET-reactivate-ndo_do_ioctl-fallback.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4053-NET-reactivate-ndo_do_ioctl-fallback.patch b/target/linux/lantiq/patches-4.14/4053-NET-reactivate-ndo_do_ioctl-fallback.patch
+new file mode 100644
+index 0000000..cdb6d4e
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4053-NET-reactivate-ndo_do_ioctl-fallback.patch
+@@ -0,0 +1,27 @@
++From c9701bab45cf3fa244033fcf5e4341a1de627807 Mon Sep 17 00:00:00 2001
++From: Quallenauge <Hamsi2k@freenet.de>
++Date: Mon, 21 May 2018 23:55:01 -0100
++Subject: [PATCH] VGV952CJW33-E-IR: Revert "wireless: wext: remove ndo_do_ioctl
++ fallback" This reverts commit 8bfb3676606454ffec836f56c5dc3e69dfc0956a.
++
++The ralink inic driver currently uses this for controlling the network
++adapters. In future versions the driver has to be modernized to comply
++with future kernel drivers.
++---
++ net/wireless/wext-core.c | 3 +++
++ 1 file changed, 3 insertions(+)
++
++Index: linux-4.14.41/net/wireless/wext-core.c
++===================================================================
++--- linux-4.14.41.orig/net/wireless/wext-core.c
+++++ linux-4.14.41/net/wireless/wext-core.c
++@@ -956,6 +956,9 @@ static int wireless_process_ioctl(struct
++ 		else if (private)
++ 			return private(dev, iwr, cmd, info, handler);
++ 	}
+++	/* Old driver API : call driver ioctl handler */
+++	if (dev->netdev_ops->ndo_do_ioctl)
+++		return dev->netdev_ops->ndo_do_ioctl(dev, (struct ifreq *)iwr, cmd);
++ 	return -EOPNOTSUPP;
++ }
++ 
+-- 
+2.7.4
+
+
+From dd0dcd8e4623a61f00fe7fbb096227f538a2c1af Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Tue, 4 Dec 2018 05:55:01 -0100
+Subject: [PATCH 21/28] VGV952CJW33-E-IR: mtd: nand: samsung: Disable subpage
+ writes on 21nm NAND.
+
+Some Samsung SLC NAND are manufactured using the 21nm process.
+They does not supports partial page programming, so disable subpage writes
+for it. Manufacturing process is stored in lowest two bits of 5th ID
+byte.
+
+This patch is derived and adapted from the upstream patch which
+handles a different samsung NAND flash devie (K9F1G08U0E) and is named
+mtd: nand: samsung: Disable subpage writes on E-die NAND
+---
+ ...msung_disable_subpage_writes_on_21nm_NAND.patch | 55 ++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4056-MTD-nand_samsung_disable_subpage_writes_on_21nm_NAND.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4056-MTD-nand_samsung_disable_subpage_writes_on_21nm_NAND.patch b/target/linux/lantiq/patches-4.14/4056-MTD-nand_samsung_disable_subpage_writes_on_21nm_NAND.patch
+new file mode 100644
+index 0000000..d3d42c9
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4056-MTD-nand_samsung_disable_subpage_writes_on_21nm_NAND.patch
+@@ -0,0 +1,55 @@
++From e81d56d247a8c93d24e03be378d1748f3e044e6b Mon Sep 17 00:00:00 2001
++From: Ladislav Michl <ladis@linux-mips.org>
++Date: Tue, 9 Jan 2018 14:19:11 +0100
++Subject: [PATCH] VGV952CJW33-E-IR: mtd: nand: samsung: Disable subpage writes on 21nm NAND.
++
++Some Samsung SLC NAND are manufactured using the 21nm process.
++They does not supports partial page programming, so disable subpage writes
++for it. Manufacturing process is stored in lowest two bits of 5th ID
++byte.
++
++This patch is derived and adapted from the upstream patch which
++handles a different samsung NAND flash devie (K9F1G08U0E) and is named
++mtd: nand: samsung: Disable subpage writes on E-die NAND
++and available since kernel release v4.16.
++---
++ drivers/mtd/nand/nand_samsung.c | 22 ++++++++++++++++++++++
++ 1 file changed, 22 insertions(+)
++
++Index: linux-4.14.78/drivers/mtd/nand/nand_samsung.c
++===================================================================
++--- linux-4.14.78.orig/drivers/mtd/nand/nand_samsung.c
+++++ linux-4.14.78/drivers/mtd/nand/nand_samsung.c
++@@ -20,6 +20,9 @@
++ static void samsung_nand_decode_id(struct nand_chip *chip)
++ {
++ 	struct mtd_info *mtd = nand_to_mtd(chip);
+++	u8 *d  = chip->id.data;
+++	pr_debug("samsung_nand_decode_id: ID is len=%d, %02X %02X %02X %02X %02X %02X %02X %02X\n",
+++		chip->id.len, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
++ 
++ 	/* New Samsung (6 byte ID): Samsung K9GAG08U0F (p.44) */
++ 	if (chip->id.len == 6 && !nand_is_slc(chip) &&
++@@ -91,6 +94,22 @@ static void samsung_nand_decode_id(struc
++ 		}
++ 	} else {
++ 		nand_decode_ext_id(chip);
+++		if (nand_is_slc(chip)) {
+++			switch (chip->id.data[1]) {
+++				/*K9F4G08U0D / K9K8G08U0D / K9K8G08U1D / K9WAG08U1D */
+++				case 0xDC:
+++					if (chip->id.len > 4 &&
+++					    (chip->id.data[4] & GENMASK(1, 0)) == 0x1) {
+++						chip->options |= NAND_NO_SUBPAGE_WRITE;
+++						pr_debug("samsung_nand_decode_id: id.data[1] is 0x%02X, disabling subpage writes\n", d[1]);
+++					} else {
+++						pr_debug("samsung_nand_decode_id: id.data[1] is 0x%02X, allowing subpage writes\n", d[1]);
+++					}
+++				break;
+++				default:
+++					break;
+++			}
+++		}
++ 	}
++ }
++ 
+-- 
+2.7.4
+
+
+From 762f4a60cd27bc6f4530702056548faa4a21cfb5 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Sun, 9 Dec 2018 15:34:18 +0100
+Subject: [PATCH 22/28] VGV952CJW33-E-IR: Move driver specific ebu setup to
+ driver
+
+Remove eb904 specific stuff from common file lantiq/xway/sysctrl.c.
+Export ltq_ebu_membase so eb904 display driver can do driver specific
+ebu setup (like it is done by the nand driver in xway_nand.c).
+
+Signed-off-by: arny <arnysch@gmx.net>
+---
+ .../4050-MIPS-lantiq-EBU-set_buscon_params.patch   | 22 +++++++++++++++-------
+ 1 file changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch b/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+index 6bdf74e..b24fbbc 100644
+--- a/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
++++ b/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+@@ -11,14 +11,22 @@
+  /* WDT */
+ --- a/arch/mips/lantiq/xway/sysctrl.c
+ +++ b/arch/mips/lantiq/xway/sysctrl.c
+-@@ -514,6 +514,10 @@ void __init ltq_soc_init(void)
++@@ -147,7 +147,9 @@
+  
+- 	/* make sure to unprotect the memory region where flash is located */
++ static void __iomem *pmu_membase;
++ void __iomem *ltq_cgu_membase;
+++
++ void __iomem *ltq_ebu_membase;
+++EXPORT_SYMBOL(ltq_ebu_membase);
++ 
++ static u32 ifccr = CGU_IFCCR;
++ static u32 pcicr = CGU_PCICR;
++@@ -474,7 +476,7 @@
++ 	if (!pmu_membase || !ltq_cgu_membase || !ltq_ebu_membase)
++ 		panic("Failed to remap core resources");
++ 
++-	/* make sure to unprotect the memory region where flash is located */
+++	/* make sure to unprotect the memory region where NOR flash is located */
+  	ltq_ebu_w32(ltq_ebu_r32(LTQ_EBU_BUSCON0) & ~EBU_WRDIS, LTQ_EBU_BUSCON0);
+-+	printk("%s:%s:%d LTQ_EBU_BUSCON2: 0x%08x\n",__FILE__,__FUNCTION__,__LINE__, ltq_ebu_r32(LTQ_EBU_BUSCON2));
+-+	//ltq_ebu_w32(0x0001d7ff, LTQ_EBU_BUSCON2); // U-Boot setting
+-+	ltq_ebu_w32(0x0001d3dd, LTQ_EBU_BUSCON2);   // init script setting
+-+	printk("%s:%s:%d LTQ_EBU_BUSCON2: 0x%08x\n",__FILE__,__FUNCTION__,__LINE__, ltq_ebu_r32(LTQ_EBU_BUSCON2));
+  
+  	/* add our generic xway clocks */
+- 	clkdev_add_pmu("10000000.fpi", NULL, 0, 0, PMU_FPI);
+-- 
+2.7.4
+
+
+From 4d6d466ca339a21030209f6fc357177d07a7d340 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Sun, 13 May 2018 19:50:48 +0200
+Subject: [PATCH 23/28] VGV952CJW33-E-IR: Add preinit network initialization
+ code. The easybox 904 needs special switch setup to bring up a working
+ network interface.
+
+---
+ .../base-files/lib/preinit/06_init_network_lantiq     | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+ create mode 100644 target/linux/lantiq/base-files/lib/preinit/06_init_network_lantiq
+
+diff --git a/target/linux/lantiq/base-files/lib/preinit/06_init_network_lantiq b/target/linux/lantiq/base-files/lib/preinit/06_init_network_lantiq
+new file mode 100644
+index 0000000..8a1c9fe
+--- /dev/null
++++ b/target/linux/lantiq/base-files/lib/preinit/06_init_network_lantiq
+@@ -0,0 +1,19 @@
++#!/bin/sh
++
++. /lib/functions/lantiq.sh
++
++set_preinit_misc_lantiq() {
++board=$(board_name)
++
++case "$board" in
++lantiq,vgv952cjw33-e-ir*)
++        # Enable VLAN on lantiq switch
++        swconfig dev switch0 vlan 1 set ports "0 1 2 3 4 5 6"
++
++        #Enable VLAN on rtl8637b switch
++        swconfig dev switch1 vlan 1 set ports "0 1 2 3 4 5 6"
++        ;;
++esac
++}
++
++boot_hook_add preinit_main set_preinit_misc_lantiq
+-- 
+2.7.4
+
+
+From 72003331d0ae1447f6bab704acb64ed19f810839 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Sun, 13 May 2018 19:52:16 +0200
+Subject: [PATCH 24/28] VGV952CJW33-E-IR: Reimplement recovery watchdog for
+ vendor uboot. Currently the bootnum uboot environment variable is increased
+ each boot and decreased by the vendor rootfs image. If the value (counter) is
+ equals than 6 the uboot triggers the recovery procedure, which switches to
+ kernel2 and rootfs2 partitions. To supress this behavior, the bootnum is
+ reset if it is greater/equals than 4.
+
+---
+ .../lib/preinit/85_reset_watchdog_timer_lantiq     | 31 ++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+ create mode 100644 target/linux/lantiq/base-files/lib/preinit/85_reset_watchdog_timer_lantiq
+
+diff --git a/target/linux/lantiq/base-files/lib/preinit/85_reset_watchdog_timer_lantiq b/target/linux/lantiq/base-files/lib/preinit/85_reset_watchdog_timer_lantiq
+new file mode 100644
+index 0000000..64a3246
+--- /dev/null
++++ b/target/linux/lantiq/base-files/lib/preinit/85_reset_watchdog_timer_lantiq
+@@ -0,0 +1,31 @@
++#!/bin/sh
++
++. /lib/functions/lantiq.sh
++
++reset_watchdog_timer_lantiq() {
++board=$(board_name)
++
++case "$board" in
++lantiq,vgv952cjw33-e-ir*)
++        # Add envtools configuration
++        if [ -e /etc/uci-defaults/30_uboot-envtools ]; then
++                echo "fw_config is generated now"
++                /bin/sh /etc/uci-defaults/30_uboot-envtools
++        else
++                echo "fw_config exists already"
++        fi
++
++        BOOTNUM=`/usr/sbin/fw_printenv bootnum -n`
++        echo "Bootnum: $BOOTNUM"
++        if [[ ! -z "$BOOTNUM" ]]; then
++                if [[ "$BOOTNUM" -ge 4 ]]; then
++                        # Reset bootnum to not interfere with the recovery trigger of uboot.
++                        # Only jumps in on vendor uboot.
++                        /usr/sbin/fw_setenv bootnum
++                fi
++        fi
++        ;;
++esac
++}
++
++boot_hook_add preinit_main reset_watchdog_timer_lantiq
+-- 
+2.7.4
+
+
+From ba36ca3b78528909962f77f7e8f2c7d79f0e7490 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 25/28] VGV952CJW33-E-IR: Improve default wifi switch network
+ config.
+
+With the use of dedicated VLANs for wlan traffic the network
+setup is getting non-trivial. This patch provides
+a setup script which generates the network config on boot.
+---
+ .../base-files/etc/uci-defaults/80_wifi_setup      | 72 ++++++++++++++++++++++
+ 1 file changed, 72 insertions(+)
+ create mode 100644 target/linux/lantiq/base-files/etc/uci-defaults/80_wifi_setup
+
+diff --git a/target/linux/lantiq/base-files/etc/uci-defaults/80_wifi_setup b/target/linux/lantiq/base-files/etc/uci-defaults/80_wifi_setup
+new file mode 100644
+index 0000000..503ace8
+--- /dev/null
++++ b/target/linux/lantiq/base-files/etc/uci-defaults/80_wifi_setup
+@@ -0,0 +1,72 @@
++#!/bin/sh
++
++. /lib/functions/uci-defaults.sh
++. /lib/functions/system.sh
++. /lib/functions/lantiq.sh
++
++board=$(board_name)
++
++case "$board" in
++lantiq,vgv952cjw33-e-ir*)
++        wlan_dev=$(uci get network.wlan_dev.name)
++        if [ "$wlan_dev" = "eth0.66" ]; then
++           echo "wlan seems to intially setup - don't touch config"
++           return
++        fi
++
++	# Add interface for communicating with the iNIC
++	uci -q batch <<-EOF
++		set network.inic_dev='device'
++		set network.inic_dev.name='eth0.3'
++
++		set network.inic='interface'
++		set network.inic.proto='none'
++		set network.inic.ifname='eth0.3'
++	EOF
++
++	# Add VLAN with untagged port for communicating with the iNIC
++	uci -q batch <<-EOF
++		add network switch_vlan
++		set network.@switch_vlan[-1].device='switch0'
++		set network.@switch_vlan[-1].vlan='3'
++		set network.@switch_vlan[-1].vid='3'
++		set network.@switch_vlan[-1].fid='3'
++		set network.@switch_vlan[-1].ports='5 6t'
++	EOF
++
++	# Add interface for normal wlan traffic
++	uci -q batch <<-EOF
++		set network.wlan_dev='device'
++		set network.wlan_dev.name='eth0.66'
++		add_list network.lan.ifname='eth0.66'
++	EOF
++
++	# Add interface for guest wlan traffic
++	uci -q batch <<-EOF
++		set network.guest_wlan_dev='device'
++		set network.guest_wlan_dev.name='eth0.71'
++	EOF
++
++	# Add VLAN with tagged port for communicating with the iNIC wlan
++	uci -q batch <<-EOF
++		add network switch_vlan
++		set network.@switch_vlan[-1].device='switch0'
++		set network.@switch_vlan[-1].vlan='4'
++		set network.@switch_vlan[-1].vid='66'
++		set network.@switch_vlan[-1].fid='4'
++		set network.@switch_vlan[-1].ports='5t 6t'
++	EOF
++
++	# Add VLAN with tagged port for communicating with the iNIC guest wlan
++	uci -q batch <<-EOF
++		add network switch_vlan
++		set network.@switch_vlan[-1].device='switch0'
++		set network.@switch_vlan[-1].vlan='5'
++		set network.@switch_vlan[-1].vid='71'
++		set network.@switch_vlan[-1].fid='5'
++		set network.@switch_vlan[-1].ports='5t 6t'
++	EOF
++	;;
++esac
++
++exit 0
+-- 
+2.7.4
+
+
+From 018c3db40c94a81797b436fcce14159ef1ef23e5 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 26/28] VGV952CJW33-E-IR: Bring up network default
+ configuration. Add configuration for both of the switches.
+
+---
+ target/linux/lantiq/base-files/etc/board.d/02_network | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/target/linux/lantiq/base-files/etc/board.d/02_network b/target/linux/lantiq/base-files/etc/board.d/02_network
+index a6a9e4d..5c131ee 100755
+--- a/target/linux/lantiq/base-files/etc/board.d/02_network
++++ b/target/linux/lantiq/base-files/etc/board.d/02_network
+@@ -224,6 +224,15 @@ arcadyan,vgv7510kw22-nor|arcadyan,vgv7510kw22-brn)
+ 		"2:lan:2" "3:lan:1" "4:lan:4" "5:lan:3" "0:wan:5" "6t@eth0"
+ 	;;
+ 
++lantiq,vgv952cjw33-e-ir*)
++	lan_mac=$(mtd_get_mac_ascii ubootconfig ethaddr)
++	wan_mac=$(macaddr_add "$lan_mac" 1)
++	ucidef_add_switch "switch0" \
++	"0:lan" "4:wan" "6@eth0"
++	ucidef_add_switch "switch1" \
++	"0:lan" "1:lan" "2:lan" "3:lan" "6@eth0"
++	;;
++
+ arcadyan,vgv7519-nor|arcadyan,vgv7519-brn)
+ 	wan_mac=$(mtd_get_mac_binary board_config 22)
+ 	ucidef_add_switch "switch0" \
+-- 
+2.7.4
+
+
+From da22ae6705ee1e6f877383f3ce14ea5378247869 Mon Sep 17 00:00:00 2001
+From: Jonas Albrecht <plonkbong100@protonmail.com>
+Date: Wed, 17 Apr 2019 20:10:57 +0000
+Subject: [PATCH 27/28] change patch 4052-* easybox904 BBT now by DTS
+
+add code that detect by DTS if the special easybox-904 BBT are required.
+Now it called 4052-NAND-add-easybox904-bbt-byDTS.patch
+
+Signed-off-by: Jonas Albrecht <plonkbong100@protonmail.com>
+---
+ .../4052-NAND-add-easybox904-bbt-byDTS.patch       | 131 +++++++++++++++++++++
+ .../4052-NAND-add-easybox904-bbt.patch             |  68 -----------
+ 2 files changed, 131 insertions(+), 68 deletions(-)
+ create mode 100644 target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt-byDTS.patch
+ delete mode 100644 target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt-byDTS.patch b/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt-byDTS.patch
+new file mode 100644
+index 0000000..b83d6c1
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt-byDTS.patch
+@@ -0,0 +1,131 @@
++diff -aurN a/drivers/mtd/nand/nand_bbt.c b/drivers/mtd/nand/nand_bbt.c
++--- a/drivers/mtd/nand/nand_bbt.c	2019-02-26 10:04:39.551525839 +0000
+++++ b/drivers/mtd/nand/nand_bbt.c	2019-02-26 10:04:39.697524014 +0000
++@@ -76,6 +76,32 @@
++ #define BBT_ENTRY_MASK		0x03
++ #define BBT_ENTRY_SHIFT		2
++ 
+++#define CUSTOMIZED_BBT 1
+++#if CUSTOMIZED_BBT
+++  #define	BAD_BLK_OOB_MARK_START	4
+++  #define	BAD_BLK_OOB_MARK_END	5
+++  #define	BAD_BLK_OOB_MARK_PATT	0xFF
+++
+++
+++#include <linux/mtd/rawnand.h>
+++#include <linux/of.h>
+++
+++static bool of_get_customized_bbt_from_mtd(struct mtd_info *mtd)
+++{
+++	struct nand_chip *chip = mtd_to_nand(mtd);
+++	struct device_node *dn = nand_get_flash_node(chip);
+++	return of_property_read_bool(dn, "customized-samsung-K9F4G08U0x");
+++}
+++
+++static bool of_get_customized_bbt_from_chip(struct nand_chip *chip)
+++{
+++	struct device_node *dn = nand_get_flash_node(chip);
+++	return of_property_read_bool(dn, "customized-samsung-K9F4G08U0x");
+++}
+++
+++#endif
+++
+++
++ static int nand_update_bbt(struct mtd_info *mtd, loff_t offs);
++ 
++ static inline uint8_t bbt_get_entry(struct nand_chip *chip, int block)
++@@ -109,8 +135,15 @@
++  * Check for a pattern at the given place. Used to search bad block tables and
++  * good / bad block identifiers.
++  */
+++#if CUSTOMIZED_BBT
+++static int check_pattern(struct mtd_info *mtd, uint8_t *buf, int len, int paglen, struct nand_bbt_descr *td)
+++{
+++	int i;
+++	uint8_t *p = buf;
+++#else
++ static int check_pattern(uint8_t *buf, int len, int paglen, struct nand_bbt_descr *td)
++ {
+++#endif
++ 	if (td->options & NAND_BBT_NO_OOB)
++ 		return check_pattern_no_oob(buf, td);
++ 
++@@ -118,6 +151,15 @@
++ 	if (memcmp(buf + paglen + td->offs, td->pattern, td->len))
++ 		return -1;
++ 
+++#if CUSTOMIZED_BBT /*ctc*/
+++	if (of_get_customized_bbt_from_mtd(mtd)) {
+++		for (i = BAD_BLK_OOB_MARK_START, p=buf+paglen; i <= BAD_BLK_OOB_MARK_END; i++) {
+++			if (p[i] != BAD_BLK_OOB_MARK_PATT)
+++				return -1;
+++		}
+++	}
+++#endif
+++
++ 	return 0;
++ }
++ 
++@@ -561,7 +603,11 @@
++ 
++ 			/* Read first page */
++ 			scan_read(mtd, buf, offs, mtd->writesize, td);
+++#if CUSTOMIZED_BBT
+++			if (!check_pattern(mtd, buf, scanlen, mtd->writesize, td)) {
+++#else
++ 			if (!check_pattern(buf, scanlen, mtd->writesize, td)) {
+++#endif
++ 				td->pages[i] = actblock << blocktopage;
++ 				if (td->options & NAND_BBT_VERSION) {
++ 					offs = bbt_get_ver_offs(mtd, td);
++@@ -1277,8 +1323,13 @@
++ static uint8_t scan_ff_pattern[] = { 0xff, 0xff };
++ 
++ /* Generic flash bbt descriptors */
+++//#if CUSTOMIZED_BBT /*ctc*/
+++//static uint8_t bbt_pattern[] = {'A', 'R', 'C', 'A' };
+++//static uint8_t mirror_pattern[] = {'a', 'c', 'r', 'a' };
+++//#else
++ static uint8_t bbt_pattern[] = {'B', 'b', 't', '0' };
++ static uint8_t mirror_pattern[] = {'1', 't', 'b', 'B' };
+++//#endif
++ 
++ static struct nand_bbt_descr bbt_main_descr = {
++ 	.options = NAND_BBT_LASTBLOCK | NAND_BBT_CREATE | NAND_BBT_WRITE
++@@ -1340,7 +1391,16 @@
++ 	bd = kzalloc(sizeof(*bd), GFP_KERNEL);
++ 	if (!bd)
++ 		return -ENOMEM;
+++
+++#if CUSTOMIZED_BBT /*ctc*/
+++	if (of_get_customized_bbt_from_chip(this)) {
+++		bd->options = 0 & BADBLOCK_SCAN_MASK;
+++	} else {
+++		bd->options = this->bbt_options & BADBLOCK_SCAN_MASK;
+++	}
+++#else
++ 	bd->options = this->bbt_options & BADBLOCK_SCAN_MASK;
+++#endif
++ 	bd->offs = this->badblockpos;
++ 	bd->len = (this->options & NAND_BUSWIDTH_16) ? 2 : 1;
++ 	bd->pattern = scan_ff_pattern;
++@@ -1360,6 +1420,19 @@
++ {
++ 	struct nand_chip *this = mtd_to_nand(mtd);
++ 	int ret;
+++/* change the generic bad / good block scan pattern if of_get_customized_bbt_from_chip(this) true */
+++#if CUSTOMIZED_BBT
+++	if(of_get_customized_bbt_from_chip(this)) {
+++		bbt_pattern[0] = 'A';
+++		bbt_pattern[1] = 'R';
+++		bbt_pattern[2] = 'C';
+++		bbt_pattern[3] = 'A';
+++		mirror_pattern[0] = 'a';
+++		mirror_pattern[1] = 'c';
+++		mirror_pattern[2] = 'r';
+++		mirror_pattern[3] = 'a';
+++	}
+++#endif
++ 
++ 	/* Is a flash based bad block table requested? */
++ 	if (this->bbt_options & NAND_BBT_USE_FLASH) {
+diff --git a/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch b/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
+deleted file mode 100644
+index 4e9e9d1..0000000
+--- a/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
++++ /dev/null
+@@ -1,68 +0,0 @@
+---- a/drivers/mtd/nand/nand_bbt.c
+-+++ b/drivers/mtd/nand/nand_bbt.c
+-@@ -76,6 +76,13 @@
+- #define BBT_ENTRY_MASK		0x03
+- #define BBT_ENTRY_SHIFT		2
+- 
+-+#define CUSTOMIZED_BBT 1
+-+#if CUSTOMIZED_BBT /*ctc*/
+-+ #define	BAD_BLK_OOB_MARK_START	4
+-+ #define	BAD_BLK_OOB_MARK_END	5
+-+ #define	BAD_BLK_OOB_MARK_PATT	0xFF
+-+#endif
+-+
+- static int nand_update_bbt(struct mtd_info *mtd, loff_t offs);
+- 
+- static inline uint8_t bbt_get_entry(struct nand_chip *chip, int block)
+-@@ -111,6 +118,10 @@ static int check_pattern_no_oob(uint8_t
+-  */
+- static int check_pattern(uint8_t *buf, int len, int paglen, struct nand_bbt_descr *td)
+- {
+-+#if CUSTOMIZED_BBT /*ctc*/
+-+	int i;
+-+	uint8_t *p = buf;
+-+#endif
+- 	if (td->options & NAND_BBT_NO_OOB)
+- 		return check_pattern_no_oob(buf, td);
+- 
+-@@ -118,6 +129,13 @@ static int check_pattern(uint8_t *buf, i
+- 	if (memcmp(buf + paglen + td->offs, td->pattern, td->len))
+- 		return -1;
+- 
+-+#if CUSTOMIZED_BBT /*ctc*/
+-+	for (i = BAD_BLK_OOB_MARK_START, p=buf+paglen; i <= BAD_BLK_OOB_MARK_END; i++) {
+-+		if (p[i] != BAD_BLK_OOB_MARK_PATT)
+-+			return -1;
+-+	}
+-+#endif
+-+
+- 	return 0;
+- }
+- 
+-@@ -1277,8 +1295,13 @@ static int nand_update_bbt(struct mtd_in
+- static uint8_t scan_ff_pattern[] = { 0xff, 0xff };
+- 
+- /* Generic flash bbt descriptors */
+-+#if CUSTOMIZED_BBT /*ctc*/
+-+static uint8_t bbt_pattern[] = {'A', 'R', 'C', 'A' };
+-+static uint8_t mirror_pattern[] = {'a', 'c', 'r', 'a' };
+-+#else
+- static uint8_t bbt_pattern[] = {'B', 'b', 't', '0' };
+- static uint8_t mirror_pattern[] = {'1', 't', 'b', 'B' };
+-+#endif
+- 
+- static struct nand_bbt_descr bbt_main_descr = {
+- 	.options = NAND_BBT_LASTBLOCK | NAND_BBT_CREATE | NAND_BBT_WRITE
+-@@ -1340,7 +1363,12 @@ static int nand_create_badblock_pattern(
+- 	bd = kzalloc(sizeof(*bd), GFP_KERNEL);
+- 	if (!bd)
+- 		return -ENOMEM;
+-+
+-+#if CUSTOMIZED_BBT /*ctc*/
+-+	bd->options = 0 & BADBLOCK_SCAN_MASK;
+-+#else
+- 	bd->options = this->bbt_options & BADBLOCK_SCAN_MASK;
+-+#endif
+- 	bd->offs = this->badblockpos;
+- 	bd->len = (this->options & NAND_BUSWIDTH_16) ? 2 : 1;
+- 	bd->pattern = scan_ff_pattern;
+-- 
+2.7.4
+
+
+From df87038b46849c05fe2ac4e74f43c271e18bcf28 Mon Sep 17 00:00:00 2001
+From: Jonas Albrecht <plonkbong100@protonmail.com>
+Date: Wed, 17 Apr 2019 20:10:58 +0000
+Subject: [PATCH 28/28] change DTS, add string for NAND-bbt
+
+add the line "customized-samsung-K9F4G08U0x;" to VGV952CJW33-E-IR.dts
+Needed by patch 4052-NAND-add-easybox904-bbt-byDTS.patch
+
+Signed-off-by: Jonas Albrecht <plonkbong100@protonmail.com>
+---
+ target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+index d619465..a73ce20 100644
+--- a/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
++++ b/target/linux/lantiq/files-4.14/arch/mips/boot/dts/VGV952CJW33-E-IR.dts
+@@ -253,6 +253,7 @@
+ 		lantiq,cs = <1>;				// Seems to be needed (EASY80920NAND.dts)
+ 
+ 		nand-on-flash-bbt;
++		customized-samsung-K9F4G08U0x;
+ 
+ 		partitions {
+ 		compatible = "fixed-partitions";
+-- 
+2.7.4
+

@@ -1,0 +1,226 @@
+From 4d6d466ca339a21030209f6fc357177d07a7d340 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Sun, 13 May 2018 19:50:48 +0200
+Subject: [PATCH 1/4] VGV952CJW33-E-IR: Add preinit network initialization
+ code. The easybox 904 needs special switch setup to bring up a working
+ network interface.
+
+---
+ .../base-files/lib/preinit/06_init_network_lantiq     | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+ create mode 100644 target/linux/lantiq/base-files/lib/preinit/06_init_network_lantiq
+
+diff --git a/target/linux/lantiq/base-files/lib/preinit/06_init_network_lantiq b/target/linux/lantiq/base-files/lib/preinit/06_init_network_lantiq
+new file mode 100644
+index 0000000..8a1c9fe
+--- /dev/null
++++ b/target/linux/lantiq/base-files/lib/preinit/06_init_network_lantiq
+@@ -0,0 +1,19 @@
++#!/bin/sh
++
++. /lib/functions/lantiq.sh
++
++set_preinit_misc_lantiq() {
++board=$(board_name)
++
++case "$board" in
++lantiq,vgv952cjw33-e-ir*)
++        # Enable VLAN on lantiq switch
++        swconfig dev switch0 vlan 1 set ports "0 1 2 3 4 5 6"
++
++        #Enable VLAN on rtl8637b switch
++        swconfig dev switch1 vlan 1 set ports "0 1 2 3 4 5 6"
++        ;;
++esac
++}
++
++boot_hook_add preinit_main set_preinit_misc_lantiq
+-- 
+2.7.4
+
+
+From 72003331d0ae1447f6bab704acb64ed19f810839 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Sun, 13 May 2018 19:52:16 +0200
+Subject: [PATCH 2/4] VGV952CJW33-E-IR: Reimplement recovery watchdog for
+ vendor uboot. Currently the bootnum uboot environment variable is increased
+ each boot and decreased by the vendor rootfs image. If the value (counter) is
+ equals than 6 the uboot triggers the recovery procedure, which switches to
+ kernel2 and rootfs2 partitions. To supress this behavior, the bootnum is
+ reset if it is greater/equals than 4.
+
+---
+ .../lib/preinit/85_reset_watchdog_timer_lantiq     | 31 ++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+ create mode 100644 target/linux/lantiq/base-files/lib/preinit/85_reset_watchdog_timer_lantiq
+
+diff --git a/target/linux/lantiq/base-files/lib/preinit/85_reset_watchdog_timer_lantiq b/target/linux/lantiq/base-files/lib/preinit/85_reset_watchdog_timer_lantiq
+new file mode 100644
+index 0000000..64a3246
+--- /dev/null
++++ b/target/linux/lantiq/base-files/lib/preinit/85_reset_watchdog_timer_lantiq
+@@ -0,0 +1,31 @@
++#!/bin/sh
++
++. /lib/functions/lantiq.sh
++
++reset_watchdog_timer_lantiq() {
++board=$(board_name)
++
++case "$board" in
++lantiq,vgv952cjw33-e-ir*)
++        # Add envtools configuration
++        if [ -e /etc/uci-defaults/30_uboot-envtools ]; then
++                echo "fw_config is generated now"
++                /bin/sh /etc/uci-defaults/30_uboot-envtools
++        else
++                echo "fw_config exists already"
++        fi
++
++        BOOTNUM=`/usr/sbin/fw_printenv bootnum -n`
++        echo "Bootnum: $BOOTNUM"
++        if [[ ! -z "$BOOTNUM" ]]; then
++                if [[ "$BOOTNUM" -ge 4 ]]; then
++                        # Reset bootnum to not interfere with the recovery trigger of uboot.
++                        # Only jumps in on vendor uboot.
++                        /usr/sbin/fw_setenv bootnum
++                fi
++        fi
++        ;;
++esac
++}
++
++boot_hook_add preinit_main reset_watchdog_timer_lantiq
+-- 
+2.7.4
+
+
+From ba36ca3b78528909962f77f7e8f2c7d79f0e7490 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 3/4] VGV952CJW33-E-IR: Improve default wifi switch network
+ config.
+
+With the use of dedicated VLANs for wlan traffic the network
+setup is getting non-trivial. This patch provides
+a setup script which generates the network config on boot.
+---
+ .../base-files/etc/uci-defaults/80_wifi_setup      | 72 ++++++++++++++++++++++
+ 1 file changed, 72 insertions(+)
+ create mode 100644 target/linux/lantiq/base-files/etc/uci-defaults/80_wifi_setup
+
+diff --git a/target/linux/lantiq/base-files/etc/uci-defaults/80_wifi_setup b/target/linux/lantiq/base-files/etc/uci-defaults/80_wifi_setup
+new file mode 100644
+index 0000000..503ace8
+--- /dev/null
++++ b/target/linux/lantiq/base-files/etc/uci-defaults/80_wifi_setup
+@@ -0,0 +1,72 @@
++#!/bin/sh
++
++. /lib/functions/uci-defaults.sh
++. /lib/functions/system.sh
++. /lib/functions/lantiq.sh
++
++board=$(board_name)
++
++case "$board" in
++lantiq,vgv952cjw33-e-ir*)
++        wlan_dev=$(uci get network.wlan_dev.name)
++        if [ "$wlan_dev" = "eth0.66" ]; then
++           echo "wlan seems to intially setup - don't touch config"
++           return
++        fi
++
++	# Add interface for communicating with the iNIC
++	uci -q batch <<-EOF
++		set network.inic_dev='device'
++		set network.inic_dev.name='eth0.3'
++
++		set network.inic='interface'
++		set network.inic.proto='none'
++		set network.inic.ifname='eth0.3'
++	EOF
++
++	# Add VLAN with untagged port for communicating with the iNIC
++	uci -q batch <<-EOF
++		add network switch_vlan
++		set network.@switch_vlan[-1].device='switch0'
++		set network.@switch_vlan[-1].vlan='3'
++		set network.@switch_vlan[-1].vid='3'
++		set network.@switch_vlan[-1].fid='3'
++		set network.@switch_vlan[-1].ports='5 6t'
++	EOF
++
++	# Add interface for normal wlan traffic
++	uci -q batch <<-EOF
++		set network.wlan_dev='device'
++		set network.wlan_dev.name='eth0.66'
++		add_list network.lan.ifname='eth0.66'
++	EOF
++
++	# Add interface for guest wlan traffic
++	uci -q batch <<-EOF
++		set network.guest_wlan_dev='device'
++		set network.guest_wlan_dev.name='eth0.71'
++	EOF
++
++	# Add VLAN with tagged port for communicating with the iNIC wlan
++	uci -q batch <<-EOF
++		add network switch_vlan
++		set network.@switch_vlan[-1].device='switch0'
++		set network.@switch_vlan[-1].vlan='4'
++		set network.@switch_vlan[-1].vid='66'
++		set network.@switch_vlan[-1].fid='4'
++		set network.@switch_vlan[-1].ports='5t 6t'
++	EOF
++
++	# Add VLAN with tagged port for communicating with the iNIC guest wlan
++	uci -q batch <<-EOF
++		add network switch_vlan
++		set network.@switch_vlan[-1].device='switch0'
++		set network.@switch_vlan[-1].vlan='5'
++		set network.@switch_vlan[-1].vid='71'
++		set network.@switch_vlan[-1].fid='5'
++		set network.@switch_vlan[-1].ports='5t 6t'
++	EOF
++	;;
++esac
++
++exit 0
+-- 
+2.7.4
+
+
+From 018c3db40c94a81797b436fcce14159ef1ef23e5 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 4/4] VGV952CJW33-E-IR: Bring up network default configuration.
+ Add configuration for both of the switches.
+
+---
+ target/linux/lantiq/base-files/etc/board.d/02_network | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/target/linux/lantiq/base-files/etc/board.d/02_network b/target/linux/lantiq/base-files/etc/board.d/02_network
+index a6a9e4d..5c131ee 100755
+--- a/target/linux/lantiq/base-files/etc/board.d/02_network
++++ b/target/linux/lantiq/base-files/etc/board.d/02_network
+@@ -224,6 +224,15 @@ arcadyan,vgv7510kw22-nor|arcadyan,vgv7510kw22-brn)
+ 		"2:lan:2" "3:lan:1" "4:lan:4" "5:lan:3" "0:wan:5" "6t@eth0"
+ 	;;
+ 
++lantiq,vgv952cjw33-e-ir*)
++	lan_mac=$(mtd_get_mac_ascii ubootconfig ethaddr)
++	wan_mac=$(macaddr_add "$lan_mac" 1)
++	ucidef_add_switch "switch0" \
++	"0:lan" "4:wan" "6@eth0"
++	ucidef_add_switch "switch1" \
++	"0:lan" "1:lan" "2:lan" "3:lan" "6@eth0"
++	;;
++
+ arcadyan,vgv7519-nor|arcadyan,vgv7519-brn)
+ 	wan_mac=$(mtd_get_mac_binary board_config 22)
+ 	ucidef_add_switch "switch0" \
+-- 
+2.7.4
+

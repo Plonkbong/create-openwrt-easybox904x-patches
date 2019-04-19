@@ -1,0 +1,554 @@
+From 082907c626617a93f79dd078e8e19de2a2512854 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 1/7] VGV952CJW33-E-IR: Add support for fixed-link definition.
+
+This is a common approach to define links as fixed.
+Currently only dts definition is supported.
+---
+ .../4027-NET-MIPS-lantiq-support-fixed-link.patch  | 84 ++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4027-NET-MIPS-lantiq-support-fixed-link.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4027-NET-MIPS-lantiq-support-fixed-link.patch b/target/linux/lantiq/patches-4.14/4027-NET-MIPS-lantiq-support-fixed-link.patch
+new file mode 100644
+index 0000000..fe12861
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4027-NET-MIPS-lantiq-support-fixed-link.patch
+@@ -0,0 +1,84 @@
++--- a/drivers/net/ethernet/lantiq_xrx200.c
+++++ b/drivers/net/ethernet/lantiq_xrx200.c
++@@ -1319,31 +1319,43 @@ static int xrx200_mdio_probe(struct net_
++ 	struct phy_device *phydev = NULL;
++ 	unsigned val;
++ 
++-	phydev = mdiobus_get_phy(priv->hw->mii_bus, port->phy_addr);
+++	if (of_phy_is_fixed_link(port->phy_node)) {
+++		netdev_info(dev, "Connect as fixed link.\n");
+++		phydev = of_phy_connect(dev, port->phy_node, &xrx200_mdio_link, 0,
+++				port->phy_if);
++ 
++-	if (!phydev) {
++-		netdev_err(dev, "no PHY found\n");
++-		return -ENODEV;
++-	}
+++		if (IS_ERR(phydev)) {
+++			netdev_err(dev, "Could not attach to PHY\n");
+++			return PTR_ERR(phydev);
+++		}
+++	}else{
+++		netdev_info(dev, "Connect as common phy link.\n");
+++		phydev = mdiobus_get_phy(priv->hw->mii_bus, port->phy_addr);
+++		if (!phydev) {
+++			netdev_err(dev, "no PHY found\n");
+++			return -ENODEV;
+++		}
++ 
++-	phydev = phy_connect(dev, phydev_name(phydev), &xrx200_mdio_link,
++-				port->phy_if);
+++		phydev = phy_connect(dev, phydev_name(phydev), &xrx200_mdio_link,
+++					port->phy_if);
++ 
++-	if (IS_ERR(phydev)) {
++-		netdev_err(dev, "Could not attach to PHY\n");
++-		return PTR_ERR(phydev);
+++		if (IS_ERR(phydev)) {
+++			netdev_err(dev, "Could not attach to PHY\n");
+++			return PTR_ERR(phydev);
+++		}
+++
+++		phydev->supported &= (SUPPORTED_10baseT_Half
+++				| SUPPORTED_10baseT_Full
+++				| SUPPORTED_100baseT_Half
+++				| SUPPORTED_100baseT_Full
+++				| SUPPORTED_1000baseT_Half
+++				| SUPPORTED_1000baseT_Full
+++				| SUPPORTED_Autoneg
+++				| SUPPORTED_MII
+++				| SUPPORTED_TP);
+++		phydev->advertising = phydev->supported;
++ 	}
++ 
++-	phydev->supported &= (SUPPORTED_10baseT_Half
++-			| SUPPORTED_10baseT_Full
++-			| SUPPORTED_100baseT_Half
++-			| SUPPORTED_100baseT_Full
++-			| SUPPORTED_1000baseT_Half
++-			| SUPPORTED_1000baseT_Full
++-			| SUPPORTED_Autoneg
++-			| SUPPORTED_MII
++-			| SUPPORTED_TP);
++-	phydev->advertising = phydev->supported;
++ 	port->phydev = phydev;
++ 	phydev->no_auto_carrier_off = true;
++ 
++@@ -1630,6 +1642,17 @@ static void xrx200_of_port(struct xrx200
++ 
++ 	memset(p, 0, sizeof(struct xrx200_port));
++ 	p->phy_node = of_parse_phandle(port, "phy-handle", 0);
+++
+++	if (!p->phy_node && of_phy_is_fixed_link(port)) {
+++		pr_info("Static link. Port <%d>!\n", p->num);
+++		if (of_phy_register_fixed_link(port)<0){
+++			pr_info("invalid fixed-link\n");
+++		}else{
+++			pr_info("Registered fixed-link\n");
+++		}
+++		p->phy_node = of_node_get(port);
+++	}
+++
++ 	addr = of_get_property(p->phy_node, "reg", NULL);
++ 	if (!addr)
++ 		return;
+-- 
+2.7.4
+
+
+From 85f3b43c97237797c10bf36a56b3efd6ae25cefa Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 2/7] VGV952CJW33-E-IR: lantiq/xrx200-net: add FID (filtering
+ identifier) setting
+
+By setting the FID of a VLAN group to a value other then the default (0) it
+is possible to switch from Shared VLAN Learning to Independant VLAN Learning.
+
+Taken from: https://patchwork.ozlabs.org/patch/584699/
+
+The current wifi setup is to use dedicated vlans for wlan traffic.
+eth0.66 is attached to the br-lan bridge.
+Without the patch the switch behaves same as described at
+https://dev.openwrt.org/ticket/8701 .
+To get around, implement the fid functionality and assign different fids
+to eth0.1 and eth0.66.
+---
+ .../4028-NET-MIPS-lantiq-add-FID-setting.patch     | 86 ++++++++++++++++++++++
+ 1 file changed, 86 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4028-NET-MIPS-lantiq-add-FID-setting.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4028-NET-MIPS-lantiq-add-FID-setting.patch b/target/linux/lantiq/patches-4.14/4028-NET-MIPS-lantiq-add-FID-setting.patch
+new file mode 100644
+index 0000000..37c72ac
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4028-NET-MIPS-lantiq-add-FID-setting.patch
+@@ -0,0 +1,86 @@
++diff --git a/drivers/net/ethernet/lantiq_xrx200.c b/drivers/net/ethernet/lantiq_xrx200.c
++index a19a127..8b8295b 100644
++--- a/drivers/net/ethernet/lantiq_xrx200.c
+++++ b/drivers/net/ethernet/lantiq_xrx200.c
++@@ -568,6 +568,35 @@ static int xrx200sw_get_vlan_vid(struct switch_dev *dev, const struct switch_att
++ 	return 0;
++ }
++ 
+++static int xrx200sw_set_vlan_fid(struct switch_dev *dev, const struct switch_attr *attr,
+++				 struct switch_val *val)
+++{
+++	int i;
+++	struct xrx200_pce_table_entry tev;
+++
+++	tev.table = XRX200_PCE_ACTVLAN_IDX;
+++
+++	tev.index = val->port_vlan;
+++	xrx200_pce_table_entry_read(&tev);
+++	tev.val[0] = val->value.i;
+++	xrx200_pce_table_entry_write(&tev);
+++
+++	return 0;
+++}
+++
+++static int xrx200sw_get_vlan_fid(struct switch_dev *dev, const struct switch_attr *attr,
+++				 struct switch_val *val)
+++{
+++	struct xrx200_pce_table_entry te;
+++
+++	te.table = XRX200_PCE_ACTVLAN_IDX;
+++	te.index = val->port_vlan;
+++	xrx200_pce_table_entry_read(&te);
+++	val->value.i = te.val[0];
+++
+++	return 0;
+++}
+++
++ static int xrx200sw_set_vlan_ports(struct switch_dev *dev, struct switch_val *val)
++ {
++ 	struct xrx200_hw *hw = container_of(dev, struct xrx200_hw, swdev);
++@@ -708,6 +737,30 @@ static int xrx200sw_get_port_pvid(struct switch_dev *dev, int port, int *val)
++ 	return 0;
++ }
++ 
+++static int xrx200sw_set_port_pvid(struct switch_dev *dev, int port, int val)
+++{
+++	int i;
+++	struct xrx200_pce_table_entry tev;
+++
+++	if (port >= XRX200_MAX_PORT)
+++		return -EINVAL;
+++
+++	tev.table = XRX200_PCE_ACTVLAN_IDX;
+++
+++	for (i = 0; i < XRX200_MAX_VLAN; i++)
+++	{
+++		tev.index = i;
+++		xrx200_pce_table_entry_read(&tev);
+++		if (tev.key[0] == val)
+++		{
+++			xrx200sw_write_x(i, XRX200_PCE_DEFPVID_PVID, port);
+++			return 0;
+++		}
+++	}
+++
+++	return -EINVAL;
+++}
+++
++ static int xrx200sw_get_port_link(struct switch_dev *dev,
++ 				  int port,
++ 				  struct switch_port_link *link)
++@@ -804,6 +857,14 @@ static struct switch_attr xrx200sw_vlan[] = {
++ 	},
++ 	{
++ 		.type = SWITCH_TYPE_INT,
+++		.name = "fid",
+++		.description = "Filtering Identifier (0-63)",
+++		.set = xrx200sw_set_vlan_fid,
+++		.get = xrx200sw_get_vlan_fid,
+++		.max = 63,
+++	},
+++	{
+++		.type = SWITCH_TYPE_INT,
++ 		.name = "enable",
++ 		.description = "Enable VLAN",
++ 		.set = xrx200sw_set_vlan_enable,
+-- 
+2.7.4
+
+
+From b3b61e1673383552ff18f16dfe922eb3a8b9a776 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 3/7] VGV952CJW33: Add buscon2 and addrsel2 parameters, taken
+ from vendor firmware. It is needed to setup the attached display.
+
+---
+ .../4050-MIPS-lantiq-EBU-set_buscon_params.patch   | 24 ++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch b/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+new file mode 100644
+index 0000000..6bdf74e
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+@@ -0,0 +1,24 @@
++--- a/arch/mips/include/asm/mach-lantiq/xway/lantiq_soc.h
+++++ b/arch/mips/include/asm/mach-lantiq/xway/lantiq_soc.h
++@@ -87,6 +87,8 @@ extern __iomem void *ltq_cgu_membase;
++ #define LTQ_EBU_PCC_ISTAT	0x00A0
++ #define LTQ_EBU_BUSCON1		0x0064
++ #define LTQ_EBU_ADDRSEL1	0x0024
+++#define LTQ_EBU_BUSCON2		0x0068
+++#define LTQ_EBU_ADDRSEL2	0x0028
++ #define EBU_WRDIS		0x80000000
++ 
++ /* WDT */
++--- a/arch/mips/lantiq/xway/sysctrl.c
+++++ b/arch/mips/lantiq/xway/sysctrl.c
++@@ -514,6 +514,10 @@ void __init ltq_soc_init(void)
++ 
++ 	/* make sure to unprotect the memory region where flash is located */
++ 	ltq_ebu_w32(ltq_ebu_r32(LTQ_EBU_BUSCON0) & ~EBU_WRDIS, LTQ_EBU_BUSCON0);
+++	printk("%s:%s:%d LTQ_EBU_BUSCON2: 0x%08x\n",__FILE__,__FUNCTION__,__LINE__, ltq_ebu_r32(LTQ_EBU_BUSCON2));
+++	//ltq_ebu_w32(0x0001d7ff, LTQ_EBU_BUSCON2); // U-Boot setting
+++	ltq_ebu_w32(0x0001d3dd, LTQ_EBU_BUSCON2);   // init script setting
+++	printk("%s:%s:%d LTQ_EBU_BUSCON2: 0x%08x\n",__FILE__,__FUNCTION__,__LINE__, ltq_ebu_r32(LTQ_EBU_BUSCON2));
++ 
++ 	/* add our generic xway clocks */
++ 	clkdev_add_pmu("10000000.fpi", NULL, 0, 0, PMU_FPI);
+-- 
+2.7.4
+
+
+From 5cdbe1d60acb32434bde50d8f1db279906199cba Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Feb 2018 23:43:00 -0100
+Subject: [PATCH 4/7] VGV952CJW33-E-IR: Add bad block table implementation.
+ This is based of the vendor implementation which uses a proprietary bad block
+ signature
+
+bbt_pattern[] = {'A', 'R', 'C', 'A' };
+mirror_pattern[] = {'a', 'c', 'r', 'a' };
+
+instead of the upstream one:
+
+bbt_pattern[] = {'B', 'b', 't', '0' }
+mirror_pattern[] = {'1', 't', 'b', 'B' }
+---
+ .../4052-NAND-add-easybox904-bbt.patch             | 68 ++++++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch b/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
+new file mode 100644
+index 0000000..4e9e9d1
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4052-NAND-add-easybox904-bbt.patch
+@@ -0,0 +1,68 @@
++--- a/drivers/mtd/nand/nand_bbt.c
+++++ b/drivers/mtd/nand/nand_bbt.c
++@@ -76,6 +76,13 @@
++ #define BBT_ENTRY_MASK		0x03
++ #define BBT_ENTRY_SHIFT		2
++ 
+++#define CUSTOMIZED_BBT 1
+++#if CUSTOMIZED_BBT /*ctc*/
+++ #define	BAD_BLK_OOB_MARK_START	4
+++ #define	BAD_BLK_OOB_MARK_END	5
+++ #define	BAD_BLK_OOB_MARK_PATT	0xFF
+++#endif
+++
++ static int nand_update_bbt(struct mtd_info *mtd, loff_t offs);
++ 
++ static inline uint8_t bbt_get_entry(struct nand_chip *chip, int block)
++@@ -111,6 +118,10 @@ static int check_pattern_no_oob(uint8_t
++  */
++ static int check_pattern(uint8_t *buf, int len, int paglen, struct nand_bbt_descr *td)
++ {
+++#if CUSTOMIZED_BBT /*ctc*/
+++	int i;
+++	uint8_t *p = buf;
+++#endif
++ 	if (td->options & NAND_BBT_NO_OOB)
++ 		return check_pattern_no_oob(buf, td);
++ 
++@@ -118,6 +129,13 @@ static int check_pattern(uint8_t *buf, i
++ 	if (memcmp(buf + paglen + td->offs, td->pattern, td->len))
++ 		return -1;
++ 
+++#if CUSTOMIZED_BBT /*ctc*/
+++	for (i = BAD_BLK_OOB_MARK_START, p=buf+paglen; i <= BAD_BLK_OOB_MARK_END; i++) {
+++		if (p[i] != BAD_BLK_OOB_MARK_PATT)
+++			return -1;
+++	}
+++#endif
+++
++ 	return 0;
++ }
++ 
++@@ -1277,8 +1295,13 @@ static int nand_update_bbt(struct mtd_in
++ static uint8_t scan_ff_pattern[] = { 0xff, 0xff };
++ 
++ /* Generic flash bbt descriptors */
+++#if CUSTOMIZED_BBT /*ctc*/
+++static uint8_t bbt_pattern[] = {'A', 'R', 'C', 'A' };
+++static uint8_t mirror_pattern[] = {'a', 'c', 'r', 'a' };
+++#else
++ static uint8_t bbt_pattern[] = {'B', 'b', 't', '0' };
++ static uint8_t mirror_pattern[] = {'1', 't', 'b', 'B' };
+++#endif
++ 
++ static struct nand_bbt_descr bbt_main_descr = {
++ 	.options = NAND_BBT_LASTBLOCK | NAND_BBT_CREATE | NAND_BBT_WRITE
++@@ -1340,7 +1363,12 @@ static int nand_create_badblock_pattern(
++ 	bd = kzalloc(sizeof(*bd), GFP_KERNEL);
++ 	if (!bd)
++ 		return -ENOMEM;
+++
+++#if CUSTOMIZED_BBT /*ctc*/
+++	bd->options = 0 & BADBLOCK_SCAN_MASK;
+++#else
++ 	bd->options = this->bbt_options & BADBLOCK_SCAN_MASK;
+++#endif
++ 	bd->offs = this->badblockpos;
++ 	bd->len = (this->options & NAND_BUSWIDTH_16) ? 2 : 1;
++ 	bd->pattern = scan_ff_pattern;
+-- 
+2.7.4
+
+
+From a0916b45378d3ee9314c865cc7b1f12736a515e3 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Mon, 21 May 2018 23:55:01 -0100
+Subject: [PATCH 5/7] VGV952CJW33-E-IR: Revert "wireless: wext: remove
+ ndo_do_ioctl fallback" This reverts commit
+ 8bfb3676606454ffec836f56c5dc3e69dfc0956a.
+
+The ralink inic driver currently uses this for controlling the network
+adapters. In future versions the driver has to be modernized to comply
+with future kernel drivers.
+---
+ ...4053-NET-reactivate-ndo_do_ioctl-fallback.patch | 27 ++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4053-NET-reactivate-ndo_do_ioctl-fallback.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4053-NET-reactivate-ndo_do_ioctl-fallback.patch b/target/linux/lantiq/patches-4.14/4053-NET-reactivate-ndo_do_ioctl-fallback.patch
+new file mode 100644
+index 0000000..cdb6d4e
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4053-NET-reactivate-ndo_do_ioctl-fallback.patch
+@@ -0,0 +1,27 @@
++From c9701bab45cf3fa244033fcf5e4341a1de627807 Mon Sep 17 00:00:00 2001
++From: Quallenauge <Hamsi2k@freenet.de>
++Date: Mon, 21 May 2018 23:55:01 -0100
++Subject: [PATCH] VGV952CJW33-E-IR: Revert "wireless: wext: remove ndo_do_ioctl
++ fallback" This reverts commit 8bfb3676606454ffec836f56c5dc3e69dfc0956a.
++
++The ralink inic driver currently uses this for controlling the network
++adapters. In future versions the driver has to be modernized to comply
++with future kernel drivers.
++---
++ net/wireless/wext-core.c | 3 +++
++ 1 file changed, 3 insertions(+)
++
++Index: linux-4.14.41/net/wireless/wext-core.c
++===================================================================
++--- linux-4.14.41.orig/net/wireless/wext-core.c
+++++ linux-4.14.41/net/wireless/wext-core.c
++@@ -956,6 +956,9 @@ static int wireless_process_ioctl(struct
++ 		else if (private)
++ 			return private(dev, iwr, cmd, info, handler);
++ 	}
+++	/* Old driver API : call driver ioctl handler */
+++	if (dev->netdev_ops->ndo_do_ioctl)
+++		return dev->netdev_ops->ndo_do_ioctl(dev, (struct ifreq *)iwr, cmd);
++ 	return -EOPNOTSUPP;
++ }
++ 
+-- 
+2.7.4
+
+
+From dd0dcd8e4623a61f00fe7fbb096227f538a2c1af Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Tue, 4 Dec 2018 05:55:01 -0100
+Subject: [PATCH 6/7] VGV952CJW33-E-IR: mtd: nand: samsung: Disable subpage
+ writes on 21nm NAND.
+
+Some Samsung SLC NAND are manufactured using the 21nm process.
+They does not supports partial page programming, so disable subpage writes
+for it. Manufacturing process is stored in lowest two bits of 5th ID
+byte.
+
+This patch is derived and adapted from the upstream patch which
+handles a different samsung NAND flash devie (K9F1G08U0E) and is named
+mtd: nand: samsung: Disable subpage writes on E-die NAND
+---
+ ...msung_disable_subpage_writes_on_21nm_NAND.patch | 55 ++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+ create mode 100644 target/linux/lantiq/patches-4.14/4056-MTD-nand_samsung_disable_subpage_writes_on_21nm_NAND.patch
+
+diff --git a/target/linux/lantiq/patches-4.14/4056-MTD-nand_samsung_disable_subpage_writes_on_21nm_NAND.patch b/target/linux/lantiq/patches-4.14/4056-MTD-nand_samsung_disable_subpage_writes_on_21nm_NAND.patch
+new file mode 100644
+index 0000000..d3d42c9
+--- /dev/null
++++ b/target/linux/lantiq/patches-4.14/4056-MTD-nand_samsung_disable_subpage_writes_on_21nm_NAND.patch
+@@ -0,0 +1,55 @@
++From e81d56d247a8c93d24e03be378d1748f3e044e6b Mon Sep 17 00:00:00 2001
++From: Ladislav Michl <ladis@linux-mips.org>
++Date: Tue, 9 Jan 2018 14:19:11 +0100
++Subject: [PATCH] VGV952CJW33-E-IR: mtd: nand: samsung: Disable subpage writes on 21nm NAND.
++
++Some Samsung SLC NAND are manufactured using the 21nm process.
++They does not supports partial page programming, so disable subpage writes
++for it. Manufacturing process is stored in lowest two bits of 5th ID
++byte.
++
++This patch is derived and adapted from the upstream patch which
++handles a different samsung NAND flash devie (K9F1G08U0E) and is named
++mtd: nand: samsung: Disable subpage writes on E-die NAND
++and available since kernel release v4.16.
++---
++ drivers/mtd/nand/nand_samsung.c | 22 ++++++++++++++++++++++
++ 1 file changed, 22 insertions(+)
++
++Index: linux-4.14.78/drivers/mtd/nand/nand_samsung.c
++===================================================================
++--- linux-4.14.78.orig/drivers/mtd/nand/nand_samsung.c
+++++ linux-4.14.78/drivers/mtd/nand/nand_samsung.c
++@@ -20,6 +20,9 @@
++ static void samsung_nand_decode_id(struct nand_chip *chip)
++ {
++ 	struct mtd_info *mtd = nand_to_mtd(chip);
+++	u8 *d  = chip->id.data;
+++	pr_debug("samsung_nand_decode_id: ID is len=%d, %02X %02X %02X %02X %02X %02X %02X %02X\n",
+++		chip->id.len, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
++ 
++ 	/* New Samsung (6 byte ID): Samsung K9GAG08U0F (p.44) */
++ 	if (chip->id.len == 6 && !nand_is_slc(chip) &&
++@@ -91,6 +94,22 @@ static void samsung_nand_decode_id(struc
++ 		}
++ 	} else {
++ 		nand_decode_ext_id(chip);
+++		if (nand_is_slc(chip)) {
+++			switch (chip->id.data[1]) {
+++				/*K9F4G08U0D / K9K8G08U0D / K9K8G08U1D / K9WAG08U1D */
+++				case 0xDC:
+++					if (chip->id.len > 4 &&
+++					    (chip->id.data[4] & GENMASK(1, 0)) == 0x1) {
+++						chip->options |= NAND_NO_SUBPAGE_WRITE;
+++						pr_debug("samsung_nand_decode_id: id.data[1] is 0x%02X, disabling subpage writes\n", d[1]);
+++					} else {
+++						pr_debug("samsung_nand_decode_id: id.data[1] is 0x%02X, allowing subpage writes\n", d[1]);
+++					}
+++				break;
+++				default:
+++					break;
+++			}
+++		}
++ 	}
++ }
++ 
+-- 
+2.7.4
+
+
+From 762f4a60cd27bc6f4530702056548faa4a21cfb5 Mon Sep 17 00:00:00 2001
+From: arny <arnysch@gmx.net>
+Date: Sun, 9 Dec 2018 15:34:18 +0100
+Subject: [PATCH 7/7] VGV952CJW33-E-IR: Move driver specific ebu setup to
+ driver
+
+Remove eb904 specific stuff from common file lantiq/xway/sysctrl.c.
+Export ltq_ebu_membase so eb904 display driver can do driver specific
+ebu setup (like it is done by the nand driver in xway_nand.c).
+
+Signed-off-by: arny <arnysch@gmx.net>
+---
+ .../4050-MIPS-lantiq-EBU-set_buscon_params.patch   | 22 +++++++++++++++-------
+ 1 file changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch b/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+index 6bdf74e..b24fbbc 100644
+--- a/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
++++ b/target/linux/lantiq/patches-4.14/4050-MIPS-lantiq-EBU-set_buscon_params.patch
+@@ -11,14 +11,22 @@
+  /* WDT */
+ --- a/arch/mips/lantiq/xway/sysctrl.c
+ +++ b/arch/mips/lantiq/xway/sysctrl.c
+-@@ -514,6 +514,10 @@ void __init ltq_soc_init(void)
++@@ -147,7 +147,9 @@
+  
+- 	/* make sure to unprotect the memory region where flash is located */
++ static void __iomem *pmu_membase;
++ void __iomem *ltq_cgu_membase;
+++
++ void __iomem *ltq_ebu_membase;
+++EXPORT_SYMBOL(ltq_ebu_membase);
++ 
++ static u32 ifccr = CGU_IFCCR;
++ static u32 pcicr = CGU_PCICR;
++@@ -474,7 +476,7 @@
++ 	if (!pmu_membase || !ltq_cgu_membase || !ltq_ebu_membase)
++ 		panic("Failed to remap core resources");
++ 
++-	/* make sure to unprotect the memory region where flash is located */
+++	/* make sure to unprotect the memory region where NOR flash is located */
+  	ltq_ebu_w32(ltq_ebu_r32(LTQ_EBU_BUSCON0) & ~EBU_WRDIS, LTQ_EBU_BUSCON0);
+-+	printk("%s:%s:%d LTQ_EBU_BUSCON2: 0x%08x\n",__FILE__,__FUNCTION__,__LINE__, ltq_ebu_r32(LTQ_EBU_BUSCON2));
+-+	//ltq_ebu_w32(0x0001d7ff, LTQ_EBU_BUSCON2); // U-Boot setting
+-+	ltq_ebu_w32(0x0001d3dd, LTQ_EBU_BUSCON2);   // init script setting
+-+	printk("%s:%s:%d LTQ_EBU_BUSCON2: 0x%08x\n",__FILE__,__FUNCTION__,__LINE__, ltq_ebu_r32(LTQ_EBU_BUSCON2));
+  
+  	/* add our generic xway clocks */
+- 	clkdev_add_pmu("10000000.fpi", NULL, 0, 0, PMU_FPI);
+-- 
+2.7.4
+
